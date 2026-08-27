@@ -1,0 +1,50 @@
+# Python 캐시 및 컴파일 파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 가상환경
+venv/
+.venv/
+env/
+ENV/
+
+# 테스트 및 커버리지 산출물
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# 패키징 및 빌드 산출물
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# 환경 변수 및 로컬 설정
+.env
+.env.*
+!.env.example
+
+# 로그 및 임시 파일
+*.log
+*.tmp
+*.temp
+*.bak
+
+# IDE 및 운영체제 파일
+.idea/
+.vscode/
+.vs/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Arcade/게임 실행 중 생성될 수 있는 파일
+screenshots/
+captures/
+
