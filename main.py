@@ -158,15 +158,30 @@ def outline(left: float, bottom: float, right: float, top: float, color, width=2
     arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, color, width)
 
 
+TEXT_CACHE_SIZE = 3000
+_TEXT_CACHE: dict = {}
+
+
 def label(text: str, x: float, y: float, size: float = 16, color=WHITE,
           anchor_x: str = "left", anchor_y: str = "baseline", bold=False):
-    # draw_text는 매 프레임 호출 시 느린 경고가 발생하므로 Text 객체를 사용한다.
     # 논리 좌표계에서 그린 글자를 확대하면 흐려지므로, 글자만 실제 창 해상도로 직접 그린다.
     window = arcade.get_window()
     window.default_camera.use()
     scale_x, scale_y = window.width / UI_WIDTH, window.height / UI_HEIGHT
-    arcade.Text(str(text), x * scale_x, y * scale_y, color, size * scale_y,
-                font_name=FONT, anchor_x=anchor_x, anchor_y=anchor_y, bold=bold).draw()
+    position = (x * scale_x, y * scale_y)
+    # 위치는 저장 기준에서 빼서, 움직이는 카드의 글자도 같은 객체를 옮겨 다시 쓴다.
+    key = (str(text), size, tuple(color), anchor_x, anchor_y, bold, window.width, window.height)
+    text_object = _TEXT_CACHE.get(key)
+    if text_object is None:
+        # Text 객체를 만드는 데는 그리는 것보다 수십 배 오래 걸리므로, 한 번 만든 글자는 저장해 다시 쓴다.
+        text_object = arcade.Text(str(text), position[0], position[1], color, size * scale_y,
+                                  font_name=FONT, anchor_x=anchor_x, anchor_y=anchor_y, bold=bold)
+        if len(_TEXT_CACHE) >= TEXT_CACHE_SIZE:
+            _TEXT_CACHE.pop(next(iter(_TEXT_CACHE)))  # 가장 오래된 글자부터 버린다.
+        _TEXT_CACHE[key] = text_object
+    elif text_object.position != position:
+        text_object.position = position
+    text_object.draw()
     window.camera.use()
 
 
