@@ -1,0 +1,2 @@
+# Windows 배치 파일은 CRLF 줄바꿈이어야 goto 반복이 안정적으로 동작한다
+*.bat text eol=crlf
