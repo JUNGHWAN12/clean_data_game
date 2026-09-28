@@ -15,9 +15,14 @@ from pathlib import Path
 from typing import Optional
 
 import arcade
+import traceback
 from arcade.camera import Camera2D
 from arcade.types.rect import LBWH, LRBT
 
+
+# 게임 파일(card.json, assets, ranking.json)이 있는 폴더.
+# 실행 파일(.exe)로 만들면 exe 옆 폴더를, 파이썬으로 실행하면 main.py 폴더를 쓴다.
+APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
@@ -61,11 +66,12 @@ UPGRADES = [
 UPGRADE_WIDTH = 196
 UPGRADE_HEIGHT = 28
 AI_APPROVE_CHANCE = 0.4    # 안전한 카드 중 AI 자동 승인 모델이 맡는 비율
-SOUND_DIR = Path(__file__).with_name("assets") / "sounds"   # tools/make_sounds.py로 만든 소리
+SOUND_DIR = APP_DIR / "assets" / "sounds"   # tools/make_sounds.py로 만든 소리
 SOUND_NAMES = ("correct", "combo", "wrong", "server_error", "buy", "select", "end", "bgm", "bgm_fast")
 BGM_VOLUME = 0.35
 RUSH_TIME = 10.0       # 마지막 10초: 빠른 배경음으로 바꾼다
-IDLE_RETURN = {"result": 40.0, "tutorial": 60.0, "paused": 60.0}   # 부스: 방치되면 메뉴로 돌아가는 시간(초)
+IDLE_RETURN = {"result": 40.0, "tutorial": 60.0, "paused": 60.0, "idle_paused": 20.0}   # 부스: 방치되면 메뉴로 돌아가는 시간(초)
+GAME_IDLE = 45.0       # 게임 중 이 시간 동안 입력이 없으면 자리를 떠난 것으로 보고 일시정지한다
 # 3분 라운드 단계(기획서 6.2): (시작 초, 이름, 안내, 등장 난이도 상한, 자주 나오는 위험 유형)
 PHASES = [
     (0, "적응 단계", "위험 신호가 자동으로 보입니다", 1, None),
@@ -86,10 +92,16 @@ LOCK_AFTER_AUTO_SELECT = 0.8
 LOCK_AFTER_SELECT = 0.4
 
 # 오늘의 랭킹: 등급이 먼저, 같은 등급이면 점수 순. 빠른 AI보다 믿을 수 있는 AI가 위에 온다.
-RANK_FILE = Path(__file__).with_name("ranking.json")
+RANK_FILE = APP_DIR / "ranking.json"
 RANK_SIZE = 10
 NAME_LENGTH = 3
 NAME_IDLE = 30.0       # 이니셜 입력을 방치하면 저장하지 않고 결과 화면으로 넘어간다
+# 랭킹판에 올릴 수 없는 이니셜(영문 욕설·비하 표현과 한국어 욕설의 로마자 약어)
+BLOCKED_NAMES = {
+    "ASS", "FUK", "FUC", "FCK", "FKU", "FKN", "SEX", "SXY", "CUM", "TIT", "DIK", "DIC", "COK", "COC",
+    "PNS", "VAG", "FAG", "NIG", "NGR", "KKK", "NZI", "WTF", "STF", "SHT", "SUK", "XXX", "BCH",
+    "SIB", "SIP", "SBL", "SSB", "GSK", "GSE", "JOT", "JOS", "BYS", "BSN", "MCN", "JNA", "NOM", "YMN",
+}
 GRADE_ORDER = "SABCD"
 GRADE_COLORS = {"S": GREEN, "A": CYAN, "B": YELLOW, "C": ORANGE, "D": RED}
 GOOD_METRIC = 70       # 결과 화면 AI 결과물이 '안전'으로 나오는 지표 기준
@@ -265,7 +277,7 @@ class DataCard:
                 "bias": PURPLE, "mixed": ORANGE}[self.risk_key]
 
 
-CARD_FILE = Path(__file__).with_name("card.json")
+CARD_FILE = APP_DIR / "card.json"
 REQUIRED_CARD_FIELDS = {
     "title", "content_type", "source", "license", "risk_types",
     "correct_action", "explanation", "reward", "penalty", "difficulty",
@@ -329,8 +341,13 @@ CARD_DECK = load_card_deck()
 
 
 class CleanDataGame(arcade.Window):
-    def __init__(self, fullscreen: bool = False):
+    def __init__(self, fullscreen: bool = False, booth: bool = False):
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False, fullscreen=fullscreen)
+        # 부스 모드에서는 Alt+F4나 창 닫기로 꺼지지 않고, 진행 요원 키(Ctrl+Shift+Q)로만 종료한다.
+        self.booth = booth
+        self.allow_close = not booth
+        self.idle_paused = False
+        self.name_warning = ""
         arcade.set_background_color(BG)
         self.camera = Camera2D(
             # 전체 16:9 화면을 사용해 좌우 레터박스를 제거한다.
@@ -386,6 +403,15 @@ class CleanDataGame(arcade.Window):
         self.feedback_color = MUTED
         self.feedback_timer = 0.0
 
+    def on_close(self):
+        if self.allow_close:
+            super().on_close()
+
+    def staff_quit(self):
+        self.allow_close = True
+        self.set_bgm(None)
+        self.close()
+
     def fit_camera(self):
         """게임 화면(1280×800 기준)을 현재 창 크기 전체에 맞춘다. 전체 화면 해상도가 달라도 동작한다."""
         self.camera.viewport = LBWH(0, 0, self.width, self.height)
@@ -427,6 +453,8 @@ class CleanDataGame(arcade.Window):
 
     def go_menu(self):
         self.paused = False
+        self.idle_paused = False
+        self.idle_time = 0.0
         self.game_screen = "menu"
         self.set_bgm(None)
 
@@ -469,6 +497,15 @@ class CleanDataGame(arcade.Window):
         else:
             self.show_result()
 
+    def submit_name(self):
+        if self.name_input in BLOCKED_NAMES:
+            self.name_warning = "사용할 수 없는 이니셜입니다. 다른 글자로 입력해 주세요."
+            self.name_input = ""
+            self.play("wrong", 0.4)
+            return
+        self.save_ranking()
+        self.show_result()
+
     def save_ranking(self):
         entry = self.current_entry()
         entries = self.load_ranking() + [entry]
@@ -494,6 +531,8 @@ class CleanDataGame(arcade.Window):
 
     def setup_game(self):
         self.game_screen = "game"
+        self.idle_time = 0.0
+        self.idle_paused = False
         self.cards = []
         self.selected = None
         self.deck = [DataCard(c.title, c.content_type, c.source, c.license,
@@ -564,9 +603,19 @@ class CleanDataGame(arcade.Window):
         if self.game_screen == "name" and self.idle_time >= NAME_IDLE:
             self.show_result()
             return
-        idle_key = "paused" if self.game_screen == "game" and self.paused else self.game_screen
+        if self.game_screen == "game" and self.paused:
+            idle_key = "idle_paused" if self.idle_paused else "paused"
+        else:
+            idle_key = self.game_screen
         if idle_key in IDLE_RETURN and self.idle_time >= IDLE_RETURN[idle_key]:
             self.go_menu()
+            return
+        if self.game_screen == "game" and not self.paused and self.idle_time >= GAME_IDLE:
+            # 방문객이 게임 도중 자리를 떠나면 일시정지하고, 곧 처음 화면으로 돌아간다.
+            self.paused = True
+            self.idle_paused = True
+            self.idle_time = 0.0
+            self.set_bgm(None)
             return
         if self.game_screen != "game" or self.paused:
             return
@@ -725,7 +774,10 @@ class CleanDataGame(arcade.Window):
 
     def on_key_press(self, key, modifiers):
         self.idle_time = 0.0
-        # 진행 요원용 키: F5 처음 화면으로, F9 소리 켜기/끄기, F11 전체 화면 전환
+        # 진행 요원용 키: Ctrl+Shift+Q 종료, F5 처음 화면으로, F9 소리 켜기/끄기, F11 전체 화면 전환
+        if key == arcade.key.Q and modifiers & arcade.key.MOD_CTRL and modifiers & arcade.key.MOD_SHIFT:
+            self.staff_quit()
+            return
         if key == arcade.key.F5:
             self.go_menu()
             return
@@ -758,12 +810,12 @@ class CleanDataGame(arcade.Window):
         if self.game_screen == "name":
             if arcade.key.A <= key <= arcade.key.Z and len(self.name_input) < NAME_LENGTH:
                 self.name_input += chr(key).upper()
+                self.name_warning = ""
                 self.play("select", 0.4)
             elif key == arcade.key.BACKSPACE:
                 self.name_input = self.name_input[:-1]
             elif key in (arcade.key.ENTER, arcade.key.NUM_ENTER) and self.name_input:
-                self.save_ranking()
-                self.show_result()
+                self.submit_name()
             elif key == arcade.key.ESCAPE:
                 self.show_result()
             return
@@ -777,6 +829,7 @@ class CleanDataGame(arcade.Window):
             if self.paused:
                 if key == arcade.key.ESCAPE:
                     self.paused = False
+                    self.idle_paused = False
                     self.set_bgm(self.game_bgm())
                 elif key == arcade.key.M:
                     self.go_menu()
@@ -858,8 +911,7 @@ class CleanDataGame(arcade.Window):
             return
         if self.game_screen == "name":
             if 400 < x < 630 and 150 < y < 210 and self.name_input:
-                self.save_ranking()
-                self.show_result()
+                self.submit_name()
             elif 650 < x < 880 and 150 < y < 210:
                 self.show_result()
             return
@@ -874,6 +926,7 @@ class CleanDataGame(arcade.Window):
         if self.paused:
             if 440 < x < 840 and 360 < y < 420:
                 self.paused = False
+                self.idle_paused = False
                 self.set_bgm(self.game_bgm())
             elif 440 < x < 840 and 280 < y < 340:
                 self.go_menu()
@@ -1140,8 +1193,13 @@ class CleanDataGame(arcade.Window):
         rect(0, 0, UI_WIDTH, UI_HEIGHT, (10, 16, 31, 215))
         rect(390, 250, 890, 560, PANEL)
         outline(390, 250, 890, 560, CYAN, 2)
-        label("일시정지", 640, 500, 28, WHITE, "center", "center", True)
-        label("시간과 컨베이어가 멈춰 있습니다.", 640, 458, 14, MUTED, "center", "center")
+        if self.idle_paused:
+            left = max(0, int(IDLE_RETURN["idle_paused"] - self.idle_time) + 1)
+            label("아직 플레이 중인가요?", 640, 500, 26, YELLOW, "center", "center", True)
+            label(f"{left}초 뒤 처음 화면으로 돌아갑니다. 계속하려면 ESC를 누르세요.", 640, 458, 14, WHITE, "center", "center")
+        else:
+            label("일시정지", 640, 500, 28, WHITE, "center", "center", True)
+            label("시간과 컨베이어가 멈춰 있습니다.", 640, 458, 14, MUTED, "center", "center")
         rect(440, 360, 840, 420, CYAN)
         label("ESC  계속하기", 640, 390, 18, BG, "center", "center", True)
         rect(440, 280, 840, 340, PANEL_LIGHT)
@@ -1436,6 +1494,8 @@ class CleanDataGame(arcade.Window):
         label("ENTER  저장", 515, 180, 17, BG if self.name_input else MUTED, "center", "center", True)
         rect(650, 150, 880, 210, PANEL_LIGHT)
         label("ESC  건너뛰기", 765, 180, 17, WHITE, "center", "center", True)
+        if self.name_warning:
+            label(self.name_warning, 640, 326, 13, RED, "center", "center")
 
     def draw_report_stat(self, name, value, x, y, color):
         label(name, x, y, 13, MUTED)
@@ -1449,8 +1509,19 @@ class CleanDataGame(arcade.Window):
 
 def main():
     # 부스에서는 전체 화면으로 실행한다. 개발·점검 때는 --window 옵션으로 창 모드 실행.
-    CleanDataGame(fullscreen="--window" not in sys.argv)
-    arcade.run()
+    booth = "--window" not in sys.argv
+    try:
+        game = CleanDataGame(fullscreen=booth, booth=booth)
+        if "--smoke-test" in sys.argv:
+            # 실행 파일 점검용: 3초 뒤 스스로 정상 종료한다.
+            arcade.schedule_once(lambda _dt: game.staff_quit(), 3.0)
+        arcade.run()
+    except Exception:
+        # 오류로 꺼지면 원인을 error.log에 남기고 0이 아닌 코드로 끝내, 실행 스크립트가 다시 켜게 한다.
+        with (APP_DIR / "error.log").open("a", encoding="utf-8") as file:
+            file.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{traceback.format_exc()}")
+        sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":

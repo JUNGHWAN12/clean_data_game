@@ -51,3 +51,5 @@ captures/
 
 # 부스 PC별 오늘의 랭킹 기록
 ranking.json
+# 게임 오류 기록
+error.log
