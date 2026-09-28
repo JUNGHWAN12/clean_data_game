@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import random
+import datetime
+import sys
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,9 +24,10 @@ SCREEN_HEIGHT = 1080
 # 게임 UI는 논리 좌표계에서 그린 뒤 표준 16:9 화면 전체에 맞춰 표시한다.
 UI_WIDTH = 1280
 UI_HEIGHT = 800
-TEXT_SCALE_X = SCREEN_WIDTH / UI_WIDTH
-TEXT_SCALE_Y = SCREEN_HEIGHT / UI_HEIGHT
 SCREEN_TITLE = "클린 데이터 라벨러"
+# 프로젝트 정책: 카드 정답은 모두 이 이용 목적(교육용·비상업)을 기준으로 정해져 있다.
+PROJECT_NAME = "학교 수업용 AI 학습 도우미"
+PROJECT_POLICY = "교육용 · 비상업"
 # card.json의 점수 값을 기획서 점수 규모로 환산하는 배율
 SCORE_SCALE = 10
 PENALTY_SCALE = 12
@@ -58,13 +61,47 @@ UPGRADES = [
 UPGRADE_WIDTH = 196
 UPGRADE_HEIGHT = 28
 AI_APPROVE_CHANCE = 0.4    # 안전한 카드 중 AI 자동 승인 모델이 맡는 비율
+SOUND_DIR = Path(__file__).with_name("assets") / "sounds"   # tools/make_sounds.py로 만든 소리
+SOUND_NAMES = ("correct", "combo", "wrong", "server_error", "buy", "select", "end", "bgm", "bgm_fast")
+BGM_VOLUME = 0.35
+RUSH_TIME = 10.0       # 마지막 10초: 빠른 배경음으로 바꾼다
+IDLE_RETURN = {"result": 40.0, "tutorial": 60.0, "paused": 60.0}   # 부스: 방치되면 메뉴로 돌아가는 시간(초)
+# 3분 라운드 단계(기획서 6.2): (시작 초, 이름, 안내, 등장 난이도 상한, 자주 나오는 위험 유형)
+PHASES = [
+    (0, "적응 단계", "위험 신호가 자동으로 보입니다", 1, None),
+    (25, "기본 검수", "저작권·개인정보 카드가 늘어납니다", 2, ("copyright", "privacy")),
+    (60, "혼합 데이터", "한 카드에 여러 문제가 섞여 나옵니다", 3, ("mixed",)),
+    (100, "편향 관리", "편향된 문장과 잘못된 라벨을 찾아보세요", 3, ("bias",)),
+    (140, "고속 처리", "카드가 더 빨리 들어옵니다", 3, None),
+    (170, "데이터 러시", "보너스 카드(점수 2배)가 빠르게 들어옵니다", 3, None),
+]
+PREFER_CHANCE = 0.5    # 단계별 위험 유형 카드를 우선 뽑을 확률
+FAST_SPAWN = 4.0       # 고속 처리 단계의 카드 간격(초)
+RUSH_SPAWN = 2.5       # 데이터 러시 단계의 카드 간격(초)
+BONUS_MULTIPLIER = 2   # 데이터 러시 보너스 카드 점수 배율
+PHASE_TOAST_TIME = 2.5
+# 연타 방지: 처리·선택 직후 잠시 처리 입력(1·2·3 키, 처리 버튼)을 받지 않는다(초).
+LOCK_AFTER_PROCESS = 0.5
+LOCK_AFTER_AUTO_SELECT = 0.8
+LOCK_AFTER_SELECT = 0.4
+
+# 오늘의 랭킹: 등급이 먼저, 같은 등급이면 점수 순. 빠른 AI보다 믿을 수 있는 AI가 위에 온다.
+RANK_FILE = Path(__file__).with_name("ranking.json")
+RANK_SIZE = 10
+NAME_LENGTH = 3
+NAME_IDLE = 30.0       # 이니셜 입력을 방치하면 저장하지 않고 결과 화면으로 넘어간다
+GRADE_ORDER = "SABCD"
+GRADE_COLORS = {"S": GREEN, "A": CYAN, "B": YELLOW, "C": ORANGE, "D": RED}
+GOOD_METRIC = 70       # 결과 화면 AI 결과물이 '안전'으로 나오는 지표 기준
+
+ADAPT_TIME = 25.0      # 적응 단계: 이 시간 안에 나온 카드는 도구 없이도 위험 신호를 보여준다
 AI_ASSIST_ACCURACY = 0.85  # AI 판단 도우미의 추천이 정답일 확률
 
 # 라이선스 확인 봇: 라이선스 문구의 키워드로 이용 조건을 한 줄 요약한다. 위에서부터 먼저 맞는 규칙을 쓴다.
 LICENSE_RULES = [
     (("CC0", "퍼블릭 도메인", "공공영역", "공공저작물"), "권리 제한 없음, 자유 이용"),
-    (("공공누리 1유형",), "출처 표시하면 상업 이용 가능"),
-    (("BY-NC",), "비상업만 허용, 상업 AI 불가"),
+    (("공공누리 1유형",), "출처 표시하면 자유롭게 이용 가능"),
+    (("BY-NC",), "비상업·교육 목적만 이용 가능"),
     (("BY-ND",), "변경 금지, 원본 그대로만"),
     (("BY-SA",), "출처 표시 + 같은 조건 공유"),
     (("CC BY",), "저작자 표시하면 이용 가능"),
@@ -127,7 +164,8 @@ def label(text: str, x: float, y: float, size: float = 16, color=WHITE,
     # 논리 좌표계에서 그린 글자를 확대하면 흐려지므로, 글자만 실제 창 해상도로 직접 그린다.
     window = arcade.get_window()
     window.default_camera.use()
-    arcade.Text(str(text), x * TEXT_SCALE_X, y * TEXT_SCALE_Y, color, size * TEXT_SCALE_Y,
+    scale_x, scale_y = window.width / UI_WIDTH, window.height / UI_HEIGHT
+    arcade.Text(str(text), x * scale_x, y * scale_y, color, size * scale_y,
                 font_name=FONT, anchor_x=anchor_x, anchor_y=anchor_y, bold=bold).draw()
     window.camera.use()
 
@@ -192,6 +230,8 @@ class DataCard:
     x: float = 95.0
     ai_approve: bool = False         # AI 자동 승인 모델이 대신 승인할 카드
     ai_pick: Optional[str] = None    # AI 판단 도우미의 추천 행동(틀릴 수 있음)
+    hinted: bool = False             # 적응 단계에 나와 위험 신호를 자동으로 보여줄 카드
+    bonus: bool = False              # 데이터 러시 단계의 점수 2배 카드
 
     @property
     def risk_key(self) -> str:
@@ -208,52 +248,6 @@ class DataCard:
     def risk_color(self):
         return {"safe": GREEN, "copyright": RED, "privacy": BLUE,
                 "bias": PURPLE, "mixed": ORANGE}[self.risk_key]
-
-
-def card(title, content_type, source, license, risks, action, explanation,
-         reward, penalty, difficulty):
-    return DataCard(title, content_type, source, license, tuple(risks), action,
-                    explanation, reward, penalty, difficulty)
-
-
-# 실제 개인정보가 아닌 교육용 가상 데이터만 사용한다.
-CARD_DECK = [
-    card("CC0로 표시된 바닷가 풍경", "이미지", "공개 아카이브", "CC0", ["safe"], "approve", "CC0 자료는 프로젝트 정책에 맞게 사용할 수 있습니다.", 100, 80, 1),
-    card("직접 촬영한 상품 이미지", "이미지", "사내 스튜디오", "사내 제작", ["safe"], "approve", "회사가 직접 제작하고 권리를 보유한 데이터입니다.", 100, 80, 1),
-    card("비식별화된 만족도 설문", "문서", "내부 설문", "사내 제작", ["safe"], "approve", "개인을 알아볼 수 없고 표본도 고르게 구성되어 있습니다.", 100, 80, 1),
-    card("허가받은 폰트로 만든 포스터", "이미지", "디자인팀", "상업 이용 허가", ["safe"], "approve", "이용 범위가 확인된 폰트와 사내 디자인을 사용했습니다.", 100, 80, 1),
-    card("다양한 연령의 거리 표정 데이터", "이미지", "현장 촬영팀", "촬영 동의 완료", ["safe"], "approve", "촬영 동의와 대표성 확인이 끝난 데이터입니다.", 110, 80, 1),
-    card("야생동물 관찰 기록", "글", "오픈 데이터 포털", "CC BY", ["safe"], "approve", "출처를 기록하면 사용할 수 있는 공개 데이터입니다.", 100, 80, 1),
-    card("워터마크가 있는 인물 사진", "이미지", "unknown_sns", "확인 불가", ["copyright"], "remove", "출처와 이용 허가를 확인할 수 없어 상업용 학습에서 제외합니다.", 140, 150, 1),
-    card("출처 없는 블로그 글 전문", "글", "개인 블로그", "표기 없음", ["copyright"], "remove", "원문 전체를 허가 없이 수집했을 가능성이 높습니다.", 140, 150, 1),
-    card("상업적 이용 금지 라이선스 이미지", "이미지", "사진 커뮤니티", "CC BY-NC", ["copyright"], "remove", "상업용 AI 서비스 정책과 맞지 않는 라이선스입니다.", 140, 150, 1),
-    card("작가명 표기가 필요한 이미지", "이미지", "공개 갤러리", "CC BY", ["copyright"], "refine", "저작자 표시를 메타데이터에 추가한 뒤 사용해야 합니다.", 120, 120, 1),
-    card("구매하지 않은 유료 폰트 포스터", "이미지", "디자인 커뮤니티", "개인용만 허용", ["copyright"], "remove", "상업용 데이터셋에서 사용할 권한이 없습니다.", 150, 160, 1),
-    card("출처 링크가 잘린 기사 캡처", "글", "뉴스 SNS", "일부만 확인", ["copyright"], "remove", "출처와 이용 범위를 먼저 확인할 수 없는 자료입니다.", 140, 150, 2),
-    card("이름과 전화번호가 있는 상담 기록", "문서", "고객센터", "내부 문서", ["privacy"], "refine", "이름과 연락처를 마스킹한 뒤 학습 데이터로 사용합니다.", 140, 170, 1),
-    card("번호판이 선명한 거리 사진", "이미지", "거리 촬영팀", "촬영 동의 확인", ["privacy"], "refine", "차량 번호판을 블러 처리하면 식별 위험을 줄일 수 있습니다.", 130, 170, 1),
-    card("이메일 주소가 포함된 문의 글", "글", "고객 문의함", "내부 문서", ["privacy"], "refine", "이메일 주소를 삭제하거나 가명으로 바꿔야 합니다.", 130, 170, 1),
-    card("얼굴과 사원번호가 함께 있는 출입 기록", "문서", "출입 시스템", "민감 내부자료", ["privacy"], "remove", "얼굴과 사원번호가 함께 있어 단순 마스킹만으로 부족합니다.", 160, 200, 2),
-    card("학생 이름이 있는 성적표", "문서", "학교 서버", "교육 기록", ["privacy"], "remove", "미성년자의 교육 기록은 이 프로젝트 데이터로 가져오지 않습니다.", 160, 200, 2),
-    card("가상 주소가 있는 배송 메모", "문서", "테스트 주문", "테스트 데이터", ["privacy"], "refine", "실제 주소가 아니어도 식별자처럼 보이는 정보는 비식별화합니다.", 120, 170, 2),
-    card("‘개발자는 모두 남성’ 라벨", "글", "검색 결과 묶음", "출처 기록", ["bias"], "refine", "성별 고정관념이 담긴 라벨을 중립적인 직무 라벨로 고칩니다.", 145, 150, 2),
-    card("CEO 이미지가 모두 중년 남성", "이미지", "이미지 검색", "출처 불명", ["bias"], "refine", "표본의 다양성을 보완하고 대표성 부족을 기록해야 합니다.", 145, 150, 2),
-    card("특정 지역 출신을 부정적으로 분류", "글", "커뮤니티 수집", "표기 없음", ["bias"], "remove", "출신 지역을 근거로 한 차별적 판단 데이터는 제외합니다.", 160, 170, 2),
-    card("장애인을 모두 ‘도움 필요’로 라벨링", "이미지", "분류 데이터", "내부 제작", ["bias"], "refine", "사람을 한 가지 특성으로만 규정하지 않도록 라벨을 재설계합니다.", 150, 150, 2),
-    card("남성이 요리하면 ‘비전문가’ 라벨", "이미지", "검색 데이터", "출처 기록", ["bias"], "refine", "성별과 전문성의 연결을 끊도록 라벨을 재검수합니다.", 145, 150, 2),
-    card("특정 억양만 ‘정확한 발음’으로 분류", "음성", "음성 데이터셋", "라이선스 확인", ["bias"], "refine", "말투 차이를 능력의 우열로 라벨링하지 않도록 기준을 고칩니다.", 145, 150, 2),
-    card("워터마크 + 얼굴 + 이름의 SNS 캡처", "이미지", "unknown_sns", "확인 불가", ["copyright", "privacy"], "remove", "권리와 식별 정보가 동시에 위험한 복합 데이터입니다.", 200, 240, 3),
-    card("편향 문장과 작성자 이메일", "글", "커뮤니티 수집", "확인 불가", ["bias", "privacy"], "remove", "편향 표현과 연락처가 함께 있어 학습에서 제외합니다.", 200, 240, 3),
-    card("출처 불명 이미지 + 직업 오라벨", "이미지", "검색 엔진", "확인 불가", ["copyright", "bias"], "remove", "권리 불명 자료이며 직업 라벨도 다시 확인할 수 없습니다.", 210, 240, 3),
-    card("전화번호와 상업 이용 금지 이미지", "이미지", "고객 업로드", "CC BY-NC", ["privacy", "copyright"], "remove", "개인정보와 프로젝트 정책 위반이 함께 발견됩니다.", 210, 250, 3),
-    card("출처는 있으나 얼굴 비식별화 누락", "이미지", "CC BY 갤러리", "CC BY", ["privacy", "copyright"], "refine", "출처를 유지하고 얼굴을 비식별화한 뒤 사용합니다.", 190, 210, 3),
-    card("‘간호사는 여성’으로만 연결된 라벨", "글", "검색 결과 묶음", "출처 기록", ["bias"], "refine", "직업과 성별을 고정적으로 연결하지 않도록 재라벨링합니다.", 150, 150, 2),
-    card("기부자 이름이 공개된 명단", "문서", "시민단체 자료", "공개 페이지", ["privacy"], "remove", "공개되어 있어도 이름 목록을 학습에 옮길 필요는 없습니다.", 160, 200, 2),
-    card("무료 배포 이미지, 저작자 표기 누락", "이미지", "공개 갤러리", "CC BY", ["copyright"], "refine", "무료라는 말만으로 충분하지 않습니다. 저작자 표시를 보완합니다.", 120, 120, 2),
-    card("팀이 촬영했지만 동의 기록 없음", "이미지", "사내 촬영", "기록 누락", ["privacy"], "remove", "촬영 동의 기록이 확인되지 않으면 보류하거나 제외해야 합니다.", 150, 190, 2),
-    card("서로 다른 집단이 균형 잡힌 설문", "문서", "연구팀", "연구 동의", ["safe"], "approve", "대표성 검토가 끝난 균형 잡힌 데이터입니다.", 115, 80, 1),
-    card("직접 쓴 제품 설명 문장", "글", "콘텐츠팀", "사내 제작", ["safe"], "approve", "회사가 직접 작성한 콘텐츠라 학습 권리를 확인할 수 있습니다.", 100, 80, 1),
-]
 
 
 CARD_FILE = Path(__file__).with_name("card.json")
@@ -315,13 +309,13 @@ def load_card_deck() -> list[DataCard]:
     return loaded_cards
 
 
-# 기존 예시 덱 대신 외부 카드 데이터 파일을 실제 게임 덱으로 사용한다.
+# card.json의 카드를 게임 덱으로 사용한다.
 CARD_DECK = load_card_deck()
 
 
 class CleanDataGame(arcade.Window):
-    def __init__(self):
-        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False)
+    def __init__(self, fullscreen: bool = False):
+        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False, fullscreen=fullscreen)
         arcade.set_background_color(BG)
         self.camera = Camera2D(
             # 전체 16:9 화면을 사용해 좌우 레터박스를 제거한다.
@@ -331,6 +325,17 @@ class CleanDataGame(arcade.Window):
             position=(0, 0),
             window=self,
         )
+        self.fit_camera()
+        self.idle_time = 0.0
+        self.sound_on = True
+        self.bgm_player = None
+        self.bgm_name: Optional[str] = None
+        self.sounds = {}
+        for name in SOUND_NAMES:
+            try:
+                self.sounds[name] = arcade.load_sound(SOUND_DIR / f"{name}.wav")
+            except Exception:
+                pass  # 소리 파일이나 오디오 장치가 없어도 게임은 계속한다.
         self.game_screen = "menu"
         self.tutorial_page = 0
         self.cards: list[DataCard] = []
@@ -352,6 +357,11 @@ class CleanDataGame(arcade.Window):
         self.unreviewed = 0
         self.last_result = None
         self.paused = False
+        self.phase_shown = 0
+        self.phase_toast = 0.0
+        self.action_lock = 0.0
+        self.name_input = ""
+        self.last_rank: Optional[int] = None
         self.privacy_leaks = 0
         self.copyright_issues = 0
         self.bias_issues = 0
@@ -360,6 +370,112 @@ class CleanDataGame(arcade.Window):
         self.feedback = "카드를 클릭해 상세 정보를 확인하세요."
         self.feedback_color = MUTED
         self.feedback_timer = 0.0
+
+    def fit_camera(self):
+        """게임 화면(1280×800 기준)을 현재 창 크기 전체에 맞춘다. 전체 화면 해상도가 달라도 동작한다."""
+        self.camera.viewport = LBWH(0, 0, self.width, self.height)
+
+    def on_resize(self, width: int, height: int):
+        super().on_resize(width, height)
+        self.fit_camera()
+
+    def play(self, name: str, volume: float = 0.6):
+        if self.sound_on and name in self.sounds:
+            try:
+                arcade.play_sound(self.sounds[name], volume=volume)
+            except Exception:
+                pass
+
+    def set_bgm(self, name: Optional[str]):
+        """배경음을 바꾼다. None이면 끈다."""
+        if not self.sound_on:
+            name = None
+        if name == self.bgm_name:
+            return
+        if self.bgm_player is not None:
+            try:
+                arcade.stop_sound(self.bgm_player)
+            except Exception:
+                pass
+            self.bgm_player = None
+        self.bgm_name = name
+        if name and name in self.sounds:
+            try:
+                self.bgm_player = arcade.play_sound(self.sounds[name], volume=BGM_VOLUME, loop=True)
+            except Exception:
+                self.bgm_player = None
+
+    def game_bgm(self) -> Optional[str]:
+        if self.game_screen != "game" or self.paused:
+            return None
+        return "bgm_fast" if self.time_left <= RUSH_TIME else "bgm"
+
+    def go_menu(self):
+        self.paused = False
+        self.game_screen = "menu"
+        self.set_bgm(None)
+
+    # ---------------------------------------------------------------- 오늘의 랭킹
+    @staticmethod
+    def load_ranking() -> list[dict]:
+        try:
+            with RANK_FILE.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    @staticmethod
+    def rank_key(entry: dict):
+        return (GRADE_ORDER.index(entry["grade"]), -entry["score"])
+
+    def today_ranking(self) -> list[dict]:
+        today = datetime.date.today().isoformat()
+        entries = [e for e in self.load_ranking() if e.get("date") == today]
+        return sorted(entries, key=self.rank_key)[:RANK_SIZE]
+
+    def current_entry(self) -> dict:
+        return {"date": datetime.date.today().isoformat(), "name": self.name_input,
+                "grade": self.result_grade(), "score": self.score, "trust": self.trust_score()}
+
+    def finish_round(self):
+        self.set_bgm(None)
+        self.play("end", 0.7)
+        self.cards = []
+        self.selected = None
+        self.last_rank = None
+        ranking = self.today_ranking()
+        entry = self.current_entry()
+        qualifies = len(ranking) < RANK_SIZE or self.rank_key(entry) < self.rank_key(ranking[-1])
+        if self.processed > 0 and qualifies:
+            self.name_input = ""
+            self.game_screen = "name"
+            self.idle_time = 0.0
+        else:
+            self.show_result()
+
+    def save_ranking(self):
+        entry = self.current_entry()
+        entries = self.load_ranking() + [entry]
+        try:
+            with RANK_FILE.open("w", encoding="utf-8") as file:
+                json.dump(entries, file, ensure_ascii=False, indent=1)
+        except OSError:
+            pass  # 저장하지 못해도 결과 화면은 보여준다.
+        ranking = self.today_ranking()
+        self.last_rank = next((i + 1 for i, e in enumerate(ranking) if e == entry), None)
+        self.play("buy")
+
+    def show_result(self):
+        self.game_screen = "result"
+        self.idle_time = 0.0
+
+    def trust_score(self) -> int:
+        """최종 AI 신뢰도(0~100): 정확도 40% + 세 신뢰 지표 평균 60%."""
+        if self.processed == 0:
+            return 0
+        accuracy = self.correct / self.processed
+        return round(accuracy * 40 + sum(self.metrics.values()) / 3 * 0.6)
 
     def setup_game(self):
         self.game_screen = "game"
@@ -378,6 +494,11 @@ class CleanDataGame(arcade.Window):
         self.unreviewed = 0
         self.last_result = None
         self.paused = False
+        self.phase_shown = 0
+        self.phase_toast = 0.0
+        self.action_lock = 0.0
+        self.name_input = ""
+        self.last_rank = None
         self.privacy_leaks = self.copyright_issues = self.bias_issues = 0
         self.metrics = {"copyright": 100.0, "privacy": 100.0, "fairness": 100.0}
         self.upgrades = set()
@@ -385,21 +506,35 @@ class CleanDataGame(arcade.Window):
         self.feedback_color = CYAN
         self.feedback_timer = 4.0
         self.spawn_card(155)
+        self.set_bgm("bgm")
+
+    def phase_index(self) -> int:
+        return max(i for i, phase in enumerate(PHASES) if self.elapsed >= phase[0])
 
     def spawn_card(self, x: Optional[float] = None):
-        allowed = min(3, 1 + int(self.elapsed // 48))
+        _start, _name, _desc, allowed, prefer = PHASES[self.phase_index()]
         candidates = [c for c in self.deck[self.deck_index:] if c.difficulty <= allowed]
         if not candidates:
             random.shuffle(self.deck)
             self.deck_index = 0
             candidates = [c for c in self.deck if c.difficulty <= allowed]
+        if self.phase_index() == 0:
+            # 적응 단계에는 위험 유형이 하나뿐인 카드만 낸다(기획서 6.2 "위험 유형이 명확함").
+            candidates = [c for c in candidates if c.risk_key != "mixed"] or candidates
         prototype = candidates[0]
+        if prefer and random.random() < PREFER_CHANCE:
+            # 단계의 주제에 맞는 위험 유형 카드를 더 자주 내보낸다.
+            preferred = [c for c in candidates if c.risk_key in prefer]
+            if preferred:
+                prototype = preferred[0]
         self.deck_index = self.deck.index(prototype, self.deck_index) + 1
         new_card = DataCard(prototype.title, prototype.content_type, prototype.source,
                             prototype.license, prototype.risk_types,
                             prototype.correct_action, prototype.explanation,
                             prototype.reward, prototype.penalty, prototype.difficulty,
                             x=x if x is not None else 140.0)
+        new_card.hinted = self.elapsed < ADAPT_TIME
+        new_card.bonus = self.phase_index() == len(PHASES) - 1
         if "ai_approve" in self.upgrades and new_card.risk_key == "safe" and random.random() < AI_APPROVE_CHANCE:
             new_card.ai_approve = True
         if new_card.risk_key == "mixed":
@@ -409,17 +544,38 @@ class CleanDataGame(arcade.Window):
         self.cards.append(new_card)
 
     def on_update(self, delta_time: float):
+        # 부스 운영: 결과·튜토리얼·일시정지 화면이 오래 방치되면 다음 방문객을 위해 메뉴로 돌아간다.
+        self.idle_time += delta_time
+        if self.game_screen == "name" and self.idle_time >= NAME_IDLE:
+            self.show_result()
+            return
+        idle_key = "paused" if self.game_screen == "game" and self.paused else self.game_screen
+        if idle_key in IDLE_RETURN and self.idle_time >= IDLE_RETURN[idle_key]:
+            self.go_menu()
+            return
         if self.game_screen != "game" or self.paused:
             return
         self.time_left -= delta_time
         self.elapsed += delta_time
         self.feedback_timer = max(0.0, self.feedback_timer - delta_time)
+        self.action_lock = max(0.0, self.action_lock - delta_time)
         if self.time_left <= 0:
             self.time_left = 0
-            self.game_screen = "result"
+            self.finish_round()
             return
+        self.set_bgm(self.game_bgm())
+        self.phase_toast = max(0.0, self.phase_toast - delta_time)
+        phase = self.phase_index()
+        if phase != self.phase_shown:
+            # 새 단계가 시작되면 화면 가운데에 잠시 안내한다.
+            self.phase_shown = phase
+            self.phase_toast = PHASE_TOAST_TIME
 
         spawn_interval = max(5.0, 8.0 - self.elapsed * 0.017)
+        if PHASES[phase][1] == "고속 처리":
+            spawn_interval = min(spawn_interval, FAST_SPAWN)
+        elif PHASES[phase][1] == "데이터 러시":
+            spawn_interval = RUSH_SPAWN
         self.spawn_timer += delta_time
         # 카드 폭(152)과 여백(18)을 확보한 뒤에만 새 카드를 생성한다.
         # 생성 주기보다 이동 속도가 빨라지는 후반에도 카드가 겹치지 않는다.
@@ -487,10 +643,14 @@ class CleanDataGame(arcade.Window):
             speed_bonus = min(50, max(0, int((5.0 - current.age) * 10)))
             # card.json의 reward(10~20)를 기획서 점수 규모(100~200)로 환산한다.
             earned = int(current.reward * SCORE_SCALE * multiplier) + speed_bonus
+            if current.bonus:
+                earned *= BONUS_MULTIPLIER
             self.score += earned
             self.budget += max(90, earned // 2)
-            self.feedback = f"정확합니다! +{earned}점  '{current.title}' {self.action_name(action)} 처리 완료."
+            bonus_text = "보너스 2배! " if current.bonus else ""
+            self.feedback = f"정확합니다! {bonus_text}+{earned}점  '{current.title}' {self.action_name(action)} 처리 완료."
             self.feedback_color = GREEN
+            self.play("combo" if self.combo in (5, 10, 20) else "correct")
         else:
             self.combo = 0
             lost = self.wrong_penalty(current, action)
@@ -513,6 +673,8 @@ class CleanDataGame(arcade.Window):
                 action_word = josa(self.action_name(action), "으로", "로") + " 처리해"
             self.feedback = f"주의: {action_word} 오답입니다. -{lost}점  해설은 위 패널에서 확인하세요."
             self.feedback_color = RED
+            # 위험 데이터가 학습 서버로 들어가면 서버 오류음, 그 밖의 오답은 부드러운 경고음
+            self.play("server_error" if action == "approve" else "wrong", 0.5)
         self.feedback_timer = 3.2
 
     @staticmethod
@@ -547,6 +709,19 @@ class CleanDataGame(arcade.Window):
         return {"approve": "승인", "refine": "정제", "remove": "제외"}[action]
 
     def on_key_press(self, key, modifiers):
+        self.idle_time = 0.0
+        # 진행 요원용 키: F5 처음 화면으로, F9 소리 켜기/끄기, F11 전체 화면 전환
+        if key == arcade.key.F5:
+            self.go_menu()
+            return
+        if key == arcade.key.F9:
+            self.sound_on = not self.sound_on
+            self.set_bgm(self.game_bgm())
+            return
+        if key == arcade.key.F11:
+            self.set_fullscreen(not self.fullscreen)
+            self.fit_camera()
+            return
         if self.game_screen == "menu":
             if key in (arcade.key.SPACE, arcade.key.ENTER, arcade.key.NUM_1):
                 self.setup_game()
@@ -556,32 +731,45 @@ class CleanDataGame(arcade.Window):
             return
         if self.game_screen == "tutorial":
             if key == arcade.key.ESCAPE:
-                self.game_screen = "menu"
+                self.go_menu()
             elif key in (arcade.key.RIGHT, arcade.key.SPACE, arcade.key.ENTER):
                 if self.tutorial_page == 0:
                     self.tutorial_page = 1
                 else:
-                    self.game_screen = "menu"
+                    self.go_menu()
             elif key == arcade.key.LEFT and self.tutorial_page == 1:
                 self.tutorial_page = 0
+            return
+        if self.game_screen == "name":
+            if arcade.key.A <= key <= arcade.key.Z and len(self.name_input) < NAME_LENGTH:
+                self.name_input += chr(key).upper()
+                self.play("select", 0.4)
+            elif key == arcade.key.BACKSPACE:
+                self.name_input = self.name_input[:-1]
+            elif key in (arcade.key.ENTER, arcade.key.NUM_ENTER) and self.name_input:
+                self.save_ranking()
+                self.show_result()
+            elif key == arcade.key.ESCAPE:
+                self.show_result()
             return
         if self.game_screen == "result":
             if key in (arcade.key.SPACE, arcade.key.ENTER, arcade.key.R):
                 self.setup_game()
             elif key == arcade.key.ESCAPE:
-                self.game_screen = "menu"
+                self.go_menu()
             return
         if self.game_screen == "game":
             if self.paused:
                 if key == arcade.key.ESCAPE:
                     self.paused = False
+                    self.set_bgm(self.game_bgm())
                 elif key == arcade.key.M:
-                    self.paused = False
-                    self.game_screen = "menu"
+                    self.go_menu()
                 return
             if key == arcade.key.ESCAPE:
                 # 실수로 판이 끝나지 않도록 ESC는 일시정지 화면을 연다.
                 self.paused = True
+                self.set_bgm(None)
                 return
             # 숫자열과 숫자 키패드 모두 지원한다.
             actions = {
@@ -597,6 +785,10 @@ class CleanDataGame(arcade.Window):
                     self.buy_upgrade(kind)
 
     def select_card(self, current: DataCard):
+        if self.selected is not current:
+            self.play("select", 0.4)
+            # 카드를 고르자마자 연타로 처리되지 않도록 잠시 기다린다.
+            self.action_lock = max(self.action_lock, LOCK_AFTER_SELECT)
         self.selected = current
         self.feedback = "카드가 선택되었습니다. 제목·출처·라이선스를 읽고 처리하세요."
         self.feedback_color = CYAN
@@ -613,11 +805,15 @@ class CleanDataGame(arcade.Window):
         self.select_card(self.cards[max(0, min(len(self.cards) - 1, index))])
 
     def process_selected(self, action: str):
+        if self.action_lock > 0:
+            return  # 연타 방지: 직전 처리·선택 직후의 입력은 무시한다.
         if self.selected:
             self.process_card(self.selected, action)
+            self.action_lock = LOCK_AFTER_PROCESS
         elif self.cards:
             # 선택 없이 누르면 바로 처리하지 않고, 먼저 카드를 보여준다.
             self.select_card(self.cards[0])
+            self.action_lock = LOCK_AFTER_AUTO_SELECT
             self.feedback = "서버에 가장 가까운 카드를 선택했습니다. 내용을 확인하고 다시 누르세요."
             self.feedback_timer = 3.0
         else:
@@ -628,6 +824,7 @@ class CleanDataGame(arcade.Window):
     def on_mouse_press(self, x, y, button, modifiers):
         # 실제 1920×1080 픽셀 입력을 UI 논리 좌표(1280×800)로 변환한다.
         x, y, _ = self.camera.unproject((x, y))
+        self.idle_time = 0.0
         if self.game_screen == "menu":
             if 400 < x < 880 and 270 < y < 345:
                 self.setup_game()
@@ -642,22 +839,29 @@ class CleanDataGame(arcade.Window):
                 if 150 < x < 440 and 95 < y < 160:
                     self.tutorial_page = 0
                 elif 820 < x < 1130 and 95 < y < 160:
-                    self.game_screen = "menu"
+                    self.go_menu()
+            return
+        if self.game_screen == "name":
+            if 400 < x < 630 and 150 < y < 210 and self.name_input:
+                self.save_ranking()
+                self.show_result()
+            elif 650 < x < 880 and 150 < y < 210:
+                self.show_result()
             return
         if self.game_screen == "result":
-            if 385 < x < 620 and 90 < y < 155:
+            if 385 < x < 620 and 60 < y < 125:
                 self.setup_game()
-            elif 660 < x < 895 and 90 < y < 155:
-                self.game_screen = "menu"
+            elif 660 < x < 895 and 60 < y < 125:
+                self.go_menu()
             return
         if self.game_screen != "game":
             return
         if self.paused:
             if 440 < x < 840 and 360 < y < 420:
                 self.paused = False
+                self.set_bgm(self.game_bgm())
             elif 440 < x < 840 and 280 < y < 340:
-                self.paused = False
-                self.game_screen = "menu"
+                self.go_menu()
             return
         # 카드 클릭: 컨베이어에 보이는 카드의 중심 좌표를 기준으로 선택한다.
         for current in reversed(self.cards):
@@ -686,6 +890,7 @@ class CleanDataGame(arcade.Window):
         else:
             self.budget -= cost
             self.upgrades.add(kind)
+            self.play("buy")
             if kind == "buffer":
                 self.feedback = f"{name} 작동! 컨베이어가 30% 느려집니다."
             else:
@@ -694,7 +899,9 @@ class CleanDataGame(arcade.Window):
         self.feedback_timer = 3.0
 
     def visible_risks(self, current: DataCard) -> tuple[str, ...]:
-        """보유한 탐지 도구로 찾아낸 위험 신호만 돌려준다."""
+        """보유한 탐지 도구로 찾아낸 위험 신호만 돌려준다. 적응 단계 카드는 모두 보여준다."""
+        if current.hinted:
+            return tuple(r for r in current.risk_types if r != "safe")
         return tuple(r for r in current.risk_types if RISK_TOOLS.get(r) in self.upgrades)
 
     def has_all_detectors(self) -> bool:
@@ -707,6 +914,8 @@ class CleanDataGame(arcade.Window):
             return RISK_LABELS["mixed"], ORANGE
         if risks:
             return RISK_LABELS[risks[0]], {"copyright": RED, "privacy": BLUE, "bias": PURPLE}[risks[0]]
+        if current.risk_key == "safe" and current.hinted:
+            return RISK_LABELS["safe"], GREEN
         if current.risk_key == "safe" and self.has_all_detectors():
             return "신호 없음", GREEN
         return "검수 대기", MUTED
@@ -720,6 +929,8 @@ class CleanDataGame(arcade.Window):
             self.draw_tutorial()
         elif self.game_screen == "game":
             self.draw_game()
+        elif self.game_screen == "name":
+            self.draw_name_entry()
         else:
             self.draw_result()
 
@@ -739,6 +950,13 @@ class CleanDataGame(arcade.Window):
         label("CLEAN DATA", UI_WIDTH / 2, 638, 18, CYAN, "center", bold=True)
         label("클린 데이터 라벨러", UI_WIDTH / 2, 572, 52, WHITE, "center", bold=True)
         label("좋은 AI는 좋은 데이터에서 시작됩니다.", UI_WIDTH / 2, 528, 21, MUTED, "center")
+        # 오늘의 프로젝트와 이용 목적: 카드 정답의 기준이 되므로 시작 전에 보여준다.
+        rect(330, 378, 950, 478, (18, 33, 52))
+        outline(330, 378, 950, 478, (46, 78, 104), 1)
+        label("오늘의 프로젝트", UI_WIDTH / 2, 456, 12, CYAN, "center", "center", True)
+        label(PROJECT_NAME, UI_WIDTH / 2, 428, 19, WHITE, "center", "center", True)
+        label(f"이용 목적: {PROJECT_POLICY}  ·  이 목적에 맞는 자료만 AI가 배울 수 있습니다",
+              UI_WIDTH / 2, 398, 12, MUTED, "center", "center")
         rect(400, 270, 880, 345, (35, 62, 86))
         outline(400, 270, 880, 345, CYAN, 2)
         label("▶  검수 라운드 시작", UI_WIDTH / 2, 308, 25, WHITE, "center", "center", True)
@@ -747,6 +965,24 @@ class CleanDataGame(arcade.Window):
         label("T  10초 튜토리얼 보기", UI_WIDTH / 2, 225, 18, MUTED, "center", "center")
         label("3분 동안 승인 · 정제 · 제외로 데이터를 지켜주세요", UI_WIDTH / 2, 146, 15, MUTED, "center")
         label("SPACE / ENTER로 시작", UI_WIDTH / 2, 112, 13, (91, 120, 158), "center")
+        self.draw_ranking_board(972, 150, 1250, 560)
+
+    def draw_ranking_board(self, left, bottom, right, top):
+        rect(left, bottom, right, top, (16, 28, 46))
+        outline(left, bottom, right, top, (46, 78, 104), 1)
+        label("오늘의 TOP 10", left + 16, top - 30, 15, YELLOW, bold=True)
+        label("등급·점수 순", right - 14, top - 30, 10, MUTED, "right")
+        ranking = self.today_ranking()
+        if not ranking:
+            wrapped_label("아직 기록이 없습니다. 첫 번째 주인공이 되어 보세요!", left + 16, top - 70, 16, 12, MUTED, 19, 3)
+            return
+        for index, entry in enumerate(ranking):
+            y = top - 66 - index * 33
+            color = YELLOW if index < 3 else WHITE
+            label(f"{index + 1}", left + 26, y, 13, color, "center", bold=True)
+            label(entry["name"], left + 50, y, 14, color, bold=True)
+            label(entry["grade"], left + 128, y, 14, GRADE_COLORS.get(entry["grade"], WHITE), "center", bold=True)
+            label(f"{entry['score']:,}", right - 16, y, 13, color, "right")
 
     def draw_tutorial(self):
         self.draw_header("검수 튜토리얼", "빠른 판단보다 신뢰할 수 있는 판단이 중요합니다.")
@@ -755,7 +991,7 @@ class CleanDataGame(arcade.Window):
             return
         rect(100, 155, 1180, 675, PANEL)
         label("데이터 카드 읽는 법", 145, 615, 24, CYAN, bold=True)
-        steps = [("01", "카드 선택", "카드를 클릭하거나 ← → 키로 고르면 제목·출처·라이선스를 볼 수 있습니다. 위험 신호는 탐지 도구를 사야 표시됩니다.", CYAN),
+        steps = [("01", "카드 선택", "카드를 클릭하거나 ← → 키로 고르면 제목·출처·라이선스를 볼 수 있습니다. 위험 신호는 처음 25초 동안 자동 표시되고, 그 뒤에는 탐지 도구를 사야 표시됩니다.", CYAN),
                  ("02", "행동 선택", "1 승인: 안전하거나 허가·비식별화 등 조건을 갖춘 데이터  ·  2 정제: 개인정보는 마스킹하고 잘못된 분류는 재라벨링  ·  3 제외: 권리·안전 문제가 큰 데이터", YELLOW),
                  ("03", "지표 지키기", "저작권 안전도, 개인정보 보호, 공정성이 모두 높아야 최종 AI가 신뢰를 얻습니다.", GREEN)]
         y = 535
@@ -812,7 +1048,7 @@ class CleanDataGame(arcade.Window):
         rect(x, y, x + 285 * value / 100, y + 9, color)
 
     def draw_game(self):
-        self.draw_header("클린 데이터 라벨러", "상업용 AI 서비스 데이터셋 · 책임 있는 데이터 파이프라인")
+        self.draw_header("클린 데이터 라벨러", f"오늘의 프로젝트: {PROJECT_NAME}  ·  {PROJECT_POLICY} 데이터")
         time_color = RED if self.time_left < 20 else YELLOW if self.time_left < 60 else WHITE
         label(f"{int(self.time_left // 60):02d}:{int(self.time_left % 60):02d}", 795, 755, 26, time_color, "center", "center", True)
         label("남은 시간", 795, 775, 11, MUTED, "center", "center")
@@ -837,6 +1073,13 @@ class CleanDataGame(arcade.Window):
 
         # 컨베이어: 카드 큐는 화면의 전체 너비를 사용한다.
         label("데이터 큐", 60, 665, 14, MUTED)
+        _start, phase_name, phase_desc, *_ = PHASES[self.phase_index()]
+        if self.elapsed < ADAPT_TIME:
+            left = int(ADAPT_TIME - self.elapsed) + 1
+            label(f"적응 단계 {left}초  ·  지금 나오는 카드는 위험 신호가 자동으로 표시됩니다", 1235, 665, 13, CYAN, "right")
+        else:
+            rush = phase_name == "데이터 러시"
+            label(f"{phase_name}  ·  {phase_desc}", 1235, 665, 13, YELLOW if rush else CYAN, "right")
         rect(45, 450, 1235, 650, (15, 25, 40))
         rect(60, 460, 1135, 475, (37, 54, 74))
         arcade.draw_line(1145, 456, 1145, 648, (66, 82, 111), 2)
@@ -868,6 +1111,13 @@ class CleanDataGame(arcade.Window):
         self.draw_action_button(520, "3", "제외", RED)
         for upgrade in UPGRADES:
             self.draw_upgrade(*upgrade)
+        if self.phase_toast > 0 and self.phase_shown > 0:
+            _start, name, desc, *_ = PHASES[self.phase_shown]
+            rush = name == "데이터 러시"
+            rect(340, 505, 940, 595, (10, 16, 31, 235))
+            outline(340, 505, 940, 595, YELLOW if rush else CYAN, 2)
+            label(name, 640, 565, 24, YELLOW if rush else CYAN, "center", "center", True)
+            label(desc, 640, 527, 14, WHITE, "center", "center")
         if self.paused:
             self.draw_pause()
 
@@ -929,7 +1179,7 @@ class CleanDataGame(arcade.Window):
         risks = self.visible_risks(current)
         if risks:
             label("  ".join(self.risk_name(r) for r in risks), 430, 222, 13, color)
-        elif self.has_all_detectors():
+        elif current.hinted or self.has_all_detectors():
             label("✓ 감지된 신호 없음", 430, 222, 13, GREEN)
         elif self.upgrades & set(RISK_TOOLS.values()):
             label("보유한 도구로는 감지되지 않음", 430, 222, 13, MUTED)
@@ -986,12 +1236,17 @@ class CleanDataGame(arcade.Window):
         label(current.content_type, left + 10, 506, 11, MUTED)
         if current.ai_approve:
             label("AI 승인 대기", right - 10, 506, 10, CYAN, "right")
+        elif current.bonus:
+            label("BONUS ×2", right - 10, 506, 11, YELLOW, "right", bold=True)
 
     def draw_action_button(self, x, key, name, color):
         rect(x, 38, x + 230, 108, (31, 48, 69))
         outline(x, 38, x + 230, 108, color, 2)
         label(key, x + 26, 73, 24, color, "center", "center", True)
         label(name, x + 125, 73, 20, WHITE, "center", "center", True)
+        if self.action_lock > 0:
+            # 연타 방지 대기 중에는 버튼을 흐리게 보여준다.
+            rect(x, 38, x + 230, 108, (10, 16, 31, 150))
 
     def draw_upgrade(self, kind, key, name, cost, x, y):
         active = kind in self.upgrades
@@ -1038,32 +1293,134 @@ class CleanDataGame(arcade.Window):
         return "다양한 배경을 균형 있게 표현하는 안전한 AI 모델이 완성되었습니다."
 
     def draw_result(self):
-        self.draw_header("AI 학습 리포트", "이번 라운드에서 데이터 파이프라인이 남긴 기록입니다.")
+        self.draw_header("AI 학습 리포트", "내가 고른 데이터로 학습한 AI가 이렇게 완성되었습니다.")
         grade = self.result_grade()
-        grade_color = {"S": GREEN, "A": CYAN, "B": YELLOW, "C": ORANGE, "D": RED}[grade]
-        rect(80, 125, 1200, 680, PANEL)
-        label("FINAL MODEL", 140, 625, 14, CYAN, bold=True)
-        label(grade, 185, 495, 150, grade_color, "center", "center", True)
-        label("등급", 185, 345, 18, MUTED, "center")
-        label(self.result_message(), 350, 590, 20, WHITE, bold=True)
-        wrapped_label("좋은 AI는 많은 데이터를 모으는 것만으로 완성되지 않습니다. 출처를 확인하고, 개인정보를 보호하며, 편향을 줄이는 정제 과정이 필요합니다.", 350, 550, 49, 15, MUTED, 24, 3)
-        self.draw_report_stat("처리 데이터", f"{self.processed}건", 350, 430, WHITE)
-        self.draw_report_stat("정확한 처리", f"{self.correct}건 ({int(self.correct / self.processed * 100) if self.processed else 0}%)", 590, 430, GREEN)
-        self.draw_report_stat("잘못 승인", f"{self.wrong_approved}건", 350, 380, RED)
-        self.draw_report_stat("정상 데이터 손실", f"{self.normal_loss}건", 590, 380, YELLOW)
-        self.draw_report_stat("정제·제외 혼동", f"{self.wrong_method}건", 830, 380, ORANGE)
-        self.draw_report_stat("개인정보 유출", f"{self.privacy_leaks}건", 350, 330, BLUE)
-        self.draw_report_stat("최대 콤보", f"x{self.max_combo}", 590, 330, PURPLE)
-        self.draw_report_stat("검수 없이 통과", f"{self.unreviewed}건", 830, 330, MUTED)
-        arcade.draw_line(350, 292, 1115, 292, (57, 74, 101), 1)
-        label("최종 신뢰 지표", 350, 260, 14, MUTED)
-        self.draw_small_result_metric("저작권", self.metrics["copyright"], 350, 218, RED)
-        self.draw_small_result_metric("개인정보", self.metrics["privacy"], 590, 218, BLUE)
-        self.draw_small_result_metric("공정성", self.metrics["fairness"], 830, 218, PURPLE)
+        grade_color = GRADE_COLORS[grade]
+        rect(80, 140, 1200, 700, PANEL)
+        # 위: 등급, 최종 AI 신뢰도, 한 줄 평가
+        label(grade, 170, 636, 76, grade_color, "center", "center", True)
+        label("등급", 170, 564, 14, MUTED, "center", "center")
+        label("최종 AI 신뢰도", 290, 662, 13, MUTED)
+        label(f"{self.trust_score()}", 290, 598, 44, grade_color, bold=True)
+        label("100점 만점", 290, 574, 11, MUTED)
+        wrapped_label(self.result_message(), 470, 660, 34, 17, WHITE, 26, 2)
+        info = []
+        if self.last_rank:
+            info.append(f"오늘의 순위 {self.last_rank}위")
+        tools = [name for kind, _key, name, *_ in UPGRADES if kind in self.upgrades]
+        info.append("사용한 도구: " + (", ".join(tools) if tools else "없음"))
+        wrapped_label("  ·  ".join(info), 470, 596, 62, 12, YELLOW if self.last_rank else MUTED, 18, 2)
+        # 가운데: AI 결과물 미리보기
+        label("AI 결과물 미리보기", 110, 522, 14, CYAN, bold=True)
+        label(f"지표가 {GOOD_METRIC} 이상이면 안전한 결과, 낮으면 문제가 있는 결과가 나옵니다.", 1190, 522, 11, MUTED, "right")
+        self.draw_ai_chatbot(110, 330)
+        self.draw_ai_painter(475, 330)
+        self.draw_ai_people(840, 330)
+        # 아래: 세부 기록
+        stats = [("처리 데이터", f"{self.processed}건", WHITE),
+                 ("정확한 처리", f"{self.correct}건 ({int(self.correct / self.processed * 100) if self.processed else 0}%)", GREEN),
+                 ("잘못 승인", f"{self.wrong_approved}건", RED),
+                 ("정상 데이터 손실", f"{self.normal_loss}건", YELLOW),
+                 ("정제·제외 혼동", f"{self.wrong_method}건", ORANGE),
+                 ("개인정보 유출", f"{self.privacy_leaks}건", BLUE),
+                 ("검수 없이 통과", f"{self.unreviewed}건", MUTED),
+                 ("최대 콤보", f"x{self.max_combo}", PURPLE)]
+        for index, (name, value, color) in enumerate(stats):
+            x = 110 + (index % 4) * 275
+            y = 300 - (index // 4) * 50
+            label(name, x, y, 12, MUTED)
+            label(value, x + 120, y, 15, color, bold=True)
+        self.draw_small_result_metric("저작권", self.metrics["copyright"], 110, 168, RED)
+        self.draw_small_result_metric("개인정보", self.metrics["privacy"], 385, 168, BLUE)
+        self.draw_small_result_metric("공정성", self.metrics["fairness"], 660, 168, PURPLE)
         rect(385, 60, 620, 125, CYAN)
         label("R  다시 검수하기", 502, 93, 17, BG, "center", "center", True)
         rect(660, 60, 895, 125, PANEL_LIGHT)
         label("ESC  메뉴로", 777, 93, 17, WHITE, "center", "center", True)
+
+    def draw_ai_panel(self, x, y, title, metric):
+        """AI 결과물 칸의 틀. 지표가 기준 이상이면 True(안전)를 돌려준다."""
+        rect(x, y, x + 350, y + 175, (24, 36, 58))
+        label(title, x + 14, y + 152, 13, WHITE, bold=True)
+        if self.processed == 0:
+            label("학습한 데이터가 없습니다", x + 175, y + 70, 13, MUTED, "center", "center")
+            return None
+        good = self.metrics[metric] >= GOOD_METRIC
+        label("✓ 안전" if good else "! 문제 발생", x + 336, y + 152, 12, GREEN if good else RED, "right", bold=True)
+        return good
+
+    def draw_ai_chatbot(self, x, y):
+        good = self.draw_ai_panel(x, y, "챗봇에게 물어보기", "privacy")
+        if good is None:
+            return
+        rect(x + 150, y + 100, x + 336, y + 132, (45, 70, 100))
+        label("반장 연락처 알려줘", x + 243, y + 116, 12, WHITE, "center", "center")
+        rect(x + 14, y + 16, x + 300, y + 86, (30, 62, 58) if good else (74, 32, 44))
+        arcade.draw_circle_filled(x + 34, y + 70, 9, CYAN if good else RED)
+        if good:
+            label("개인정보는 알려 드릴 수 없어요.", x + 52, y + 64, 12, WHITE, "left", "center")
+            label("선생님께 직접 여쭤보세요.", x + 52, y + 38, 12, WHITE, "left", "center")
+        else:
+            label("반장 연락처는 010-1234-XXXX", x + 52, y + 64, 12, WHITE, "left", "center")
+            label("입니다. (학습 데이터 속 번호 유출)", x + 52, y + 38, 12, (255, 170, 180), "left", "center")
+
+    def draw_ai_painter(self, x, y):
+        good = self.draw_ai_panel(x, y, "그림 생성 AI  「바닷가 풍경」", "copyright")
+        if good is None:
+            return
+        left, right, bottom, top = x + 14, x + 336, y + 14, y + 136
+        rect(left, bottom + 50, right, top, (120, 190, 235))
+        rect(left, bottom, right, bottom + 50, (40, 110, 170))
+        arcade.draw_circle_filled(right - 50, top - 30, 16, (255, 214, 102))
+        for i in range(4):
+            arcade.draw_line(left + 20 + i * 70, bottom + 30, left + 60 + i * 70, bottom + 30, (200, 230, 255), 2)
+        if good:
+            label("✓ 권리 문제가 없는 이미지", left + 8, bottom + 8, 11, WHITE)
+        else:
+            # 학습한 유료 이미지의 워터마크와 서명 흔적이 그대로 남는다.
+            for row in range(3):
+                for col in range(3):
+                    label("© STOCK", left + 20 + col * 105, bottom + 20 + row * 40, 13, (255, 255, 255, 110), bold=True)
+            label("Kim_art", right - 10, bottom + 8, 12, (40, 40, 40), "right", bold=True)
+
+    def draw_ai_people(self, x, y):
+        good = self.draw_ai_panel(x, y, "인물 생성 AI  「과학자」", "fairness")
+        if good is None:
+            return
+        skins = [(241, 200, 160), (198, 134, 90), (120, 80, 55), (230, 180, 140), (160, 110, 75), (250, 215, 180)]
+        clothes = [BLUE, GREEN, PURPLE, ORANGE, CYAN, YELLOW]
+        for i in range(6):
+            cx = x + 40 + i * 54
+            height = (48 + (i * 7) % 20) if good else 56
+            skin = skins[i] if good else skins[0]
+            cloth = clothes[i] if good else (70, 80, 100)
+            rect(cx - 15, y + 30, cx + 15, y + 30 + height, cloth)
+            arcade.draw_circle_filled(cx, y + 42 + height, 12, skin)
+            if good and i % 2 == 0:
+                rect(cx - 13, y + 30 + height, cx - 8, y + 50 + height, (60, 45, 35))
+        caption = "성별·나이·피부색이 다양한 과학자" if good else "모두 같은 모습의 과학자만 생성"
+        label(caption, x + 175, y + 12, 11, WHITE if good else (255, 170, 180), "center")
+
+    def draw_name_entry(self):
+        self.draw_header("오늘의 TOP 10 진입!", "영문 이니셜 3글자를 남기면 메뉴 화면의 랭킹판에 표시됩니다.")
+        grade = self.result_grade()
+        rect(300, 140, 980, 660, PANEL)
+        label("축하합니다!", 640, 610, 26, YELLOW, "center", "center", True)
+        label(f"등급 {grade}   ·   점수 {self.score:,}   ·   AI 신뢰도 {self.trust_score()}",
+              640, 565, 17, WHITE, "center", "center")
+        for i in range(NAME_LENGTH):
+            left = 485 + i * 110
+            rect(left, 350, left + 90, 460, (24, 36, 58))
+            outline(left, 350, left + 90, 460, CYAN if i == len(self.name_input) else (61, 82, 113), 3)
+            if i < len(self.name_input):
+                label(self.name_input[i], left + 45, 405, 48, WHITE, "center", "center", True)
+        label("키보드로 A~Z 입력  ·  BACKSPACE 지우기", 640, 300, 14, MUTED, "center", "center")
+        left_time = max(0, int(NAME_IDLE - self.idle_time))
+        label(f"{left_time}초 동안 입력이 없으면 저장하지 않고 넘어갑니다", 640, 272, 12, (96, 115, 145), "center", "center")
+        rect(400, 150, 630, 210, CYAN if self.name_input else PANEL_LIGHT)
+        label("ENTER  저장", 515, 180, 17, BG if self.name_input else MUTED, "center", "center", True)
+        rect(650, 150, 880, 210, PANEL_LIGHT)
+        label("ESC  건너뛰기", 765, 180, 17, WHITE, "center", "center", True)
 
     def draw_report_stat(self, name, value, x, y, color):
         label(name, x, y, 13, MUTED)
@@ -1076,7 +1433,8 @@ class CleanDataGame(arcade.Window):
 
 
 def main():
-    CleanDataGame()
+    # 부스에서는 전체 화면으로 실행한다. 개발·점검 때는 --window 옵션으로 창 모드 실행.
+    CleanDataGame(fullscreen="--window" not in sys.argv)
     arcade.run()
 
 
