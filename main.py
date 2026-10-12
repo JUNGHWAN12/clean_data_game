@@ -23,7 +23,10 @@ SCREEN_HEIGHT = 1080
 UI_WIDTH = 1280
 UI_HEIGHT = 800
 SCREEN_TITLE = "클린 데이터 라벨러"
-FONT = ("Malgun Gothic", "맑은 고딕", "Arial")
+# 부스 PC에 폰트를 설치하지 않아도 되도록 프로젝트에 포함된 폰트를 우선 사용한다.
+FONT = ("IBM Plex Sans KR", "Malgun Gothic", "맑은 고딕", "Arial")
+FONT_DIR = Path(__file__).with_name("assets") / "fonts"
+FONT_FILES = ("IBMPlexSansKR-Regular.ttf", "IBMPlexSansKR-Bold.ttf")
 
 BG = (10, 16, 31)
 PANEL = (20, 29, 49)
@@ -703,7 +706,7 @@ class CleanDataGame(arcade.Window):
         label("위험 신호", 330, 222, 12, MUTED)
         label("  ".join(self.risk_name(r) for r in current.risk_types), 430, 222, 13, color)
         label("검수 메모", 330, 194, 12, MUTED)
-        wrapped_label(current.explanation, 430, 194, 25, 12, WHITE, 17, 2)
+        wrapped_label(current.explanation, 430, 194, 22, 12, WHITE, 17, 2)
         if "watermark" in self.upgrades and "copyright" in current.risk_types:
             label("SCAN  워터마크 감지", 82, 165, 11, RED)
         if "privacy" in self.upgrades and "privacy" in current.risk_types:
@@ -713,7 +716,8 @@ class CleanDataGame(arcade.Window):
 
     @staticmethod
     def risk_name(risk):
-        return {"copyright": "© 저작권", "privacy": "▣ 개인정보", "bias": "⚖ 편향", "safe": "✓ 안전"}[risk]
+        # IBM Plex Sans KR에 있는 기호만 사용한다(✓, ⚖는 글리프가 없다).
+        return {"copyright": "© 저작권", "privacy": "▣ 개인정보", "bias": "◐ 편향", "safe": "○ 안전"}[risk]
 
     def draw_queue_card(self, current: DataCard):
         color = current.risk_color
@@ -773,7 +777,7 @@ class CleanDataGame(arcade.Window):
         rect(80, 125, 1200, 680, PANEL)
         label("FINAL MODEL", 140, 625, 14, CYAN, bold=True)
         label(grade, 185, 495, 150, grade_color, "center", "center", True)
-        label("등급", 185, 397, 18, MUTED, "center")
+        label("등급", 185, 372, 18, MUTED, "center")
         label(self.result_message(), 350, 590, 20, WHITE, bold=True)
         wrapped_label("좋은 AI는 많은 데이터를 모으는 것만으로 완성되지 않습니다. 출처를 확인하고, 개인정보를 보호하며, 편향을 줄이는 정제 과정이 필요합니다.", 350, 550, 49, 15, MUTED, 24, 3)
         self.draw_report_stat("처리 데이터", f"{self.processed}건", 350, 430, WHITE)
@@ -802,7 +806,14 @@ class CleanDataGame(arcade.Window):
         rect(x, y, x + 190 * value / 100, y + 8, color)
 
 
+def load_fonts():
+    """assets/fonts의 폰트 파일을 등록한다. 파일이 없으면 FileNotFoundError가 발생한다."""
+    for font_file in FONT_FILES:
+        arcade.load_font(FONT_DIR / font_file)
+
+
 def main():
+    load_fonts()
     CleanDataGame()
     arcade.run()
 

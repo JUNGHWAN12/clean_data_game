@@ -5,6 +5,8 @@
 
 카드 데이터는 `card.json`에서 불러옵니다. 카드 내용을 추가하거나 수정한 뒤 게임을 다시 실행하면 자동으로 반영됩니다. 실행 시 필수 필드와 `difficulty(1~3)`, `penalty(0 이상)` 등의 형식도 검사합니다.
 
+화면 글꼴은 `assets/fonts`에 포함된 IBM Plex Sans KR(Regular, Bold)입니다. 게임 시작 시 폰트 파일을 직접 불러오므로 PC에 폰트를 따로 설치하지 않아도 됩니다. 이 폰트는 SIL Open Font License 1.1로 배포되며(출처: Google Fonts `ofl/ibmplexsanskr`), 라이선스 전문은 `assets/fonts/OFL.txt`에 있습니다.
+
 ## 실행
 
 PowerShell에서 프로젝트 폴더를 연 뒤 실행합니다.
