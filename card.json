@@ -3793,7 +3793,7 @@
                            "safe"
                        ],
         "correct_action":  "approve",
-        "explanation":  "사용 허가가 있고 sample@example.test만 포함한다.",
+        "explanation":  "sample@example.test만 담긴 허가된 글이다.",
         "reward":  10,
         "penalty":  5,
         "difficulty":  2

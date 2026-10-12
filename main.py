@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 import json
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -50,11 +51,27 @@ def outline(left: float, bottom: float, right: float, top: float, color, width=2
     arcade.draw_lrbt_rectangle_outline(left, right, bottom, top, color, width)
 
 
+# Text 객체 생성은 느리므로 같은 글자·모양의 Text를 재사용하고 위치만 옮긴다.
+# 점수·타이머처럼 계속 바뀌는 글자 때문에 캐시가 끝없이 커지지 않도록 개수를 제한한다.
+TEXT_CACHE_SIZE = 600
+_text_cache: OrderedDict[tuple, arcade.Text] = OrderedDict()
+
+
 def label(text: str, x: float, y: float, size: float = 16, color=WHITE,
           anchor_x: str = "left", anchor_y: str = "baseline", bold=False):
-    # draw_text는 매 프레임 호출 시 느린 경고가 발생하므로 Text 객체를 사용한다.
-    arcade.Text(str(text), x, y, color, size, font_name=FONT,
-                anchor_x=anchor_x, anchor_y=anchor_y, bold=bold).draw()
+    key = (str(text), size, tuple(color), anchor_x, anchor_y, bold)
+    text_object = _text_cache.get(key)
+    if text_object is None:
+        text_object = arcade.Text(str(text), x, y, color, size, font_name=FONT,
+                                  anchor_x=anchor_x, anchor_y=anchor_y, bold=bold)
+        _text_cache[key] = text_object
+        if len(_text_cache) > TEXT_CACHE_SIZE:
+            _text_cache.popitem(last=False)
+    else:
+        _text_cache.move_to_end(key)
+        if text_object.position != (x, y):
+            text_object.position = (x, y)
+    text_object.draw()
 
 
 def wrapped(text: str, max_chars: int) -> list[str]:
@@ -245,11 +262,14 @@ CARD_DECK = load_card_deck()
 
 class CleanDataGame(arcade.Window):
     def __init__(self):
-        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False)
+        # 부스 모니터 해상도와 상관없이 하단 버튼이 가려지지 않도록 전체 화면으로 시작한다.
+        # F11로 창 모드(1920×1080)와 전환할 수 있다.
+        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False,
+                         fullscreen=True)
         arcade.set_background_color(BG)
         self.camera = Camera2D(
-            # 전체 16:9 화면을 사용해 좌우 레터박스를 제거한다.
-            viewport=LBWH(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT),
+            # 실제 창 크기 전체를 사용해 좌우 레터박스를 제거한다.
+            viewport=LBWH(0, 0, self.width, self.height),
             projection=LRBT(0, UI_WIDTH, 0, UI_HEIGHT),
             # projection을 (0, 0) 원점으로 사용하므로 카메라 이동은 없다.
             position=(0, 0),
@@ -400,7 +420,15 @@ class CleanDataGame(arcade.Window):
     def action_name(action):
         return {"approve": "승인", "refine": "정제", "remove": "제외"}[action]
 
+    def on_resize(self, width: int, height: int):
+        # 창 생성 중에 호출될 수 있으므로 카메라가 만들어진 뒤에만 화면 크기를 맞춘다.
+        if hasattr(self, "camera"):
+            self.camera.viewport = LBWH(0, 0, width, height)
+
     def on_key_press(self, key, modifiers):
+        if key == arcade.key.F11:
+            self.set_fullscreen(not self.fullscreen)
+            return
         if self.game_screen == "menu":
             if key in (arcade.key.SPACE, arcade.key.ENTER, arcade.key.NUM_1):
                 self.setup_game()
@@ -467,9 +495,10 @@ class CleanDataGame(arcade.Window):
                     self.game_screen = "menu"
             return
         if self.game_screen == "result":
-            if 385 < x < 620 and 90 < y < 155:
+            # draw_result에서 그린 버튼 좌표(y 60~125)와 맞춘다.
+            if 385 < x < 620 and 60 < y < 125:
                 self.setup_game()
-            elif 660 < x < 895 and 90 < y < 155:
+            elif 660 < x < 895 and 60 < y < 125:
                 self.game_screen = "menu"
             return
         if self.game_screen != "game":
@@ -489,12 +518,13 @@ class CleanDataGame(arcade.Window):
                 self.process_selected_if_button(650)
             elif 520 < x < 750:
                 self.process_selected_if_button(930)
-        elif 55 < y < 150 and x > 780:
-            if x < 930:
+        elif 112 < y < 146:
+            # draw_game에서 draw_upgrade로 그린 버튼 좌표와 맞춘다.
+            if 814 < x < 941:
                 self.buy_upgrade("watermark")
-            elif x < 1080:
+            elif 949 < x < 1076:
                 self.buy_upgrade("privacy")
-            else:
+            elif 1084 < x < 1214:
                 self.buy_upgrade("bias")
 
     def process_selected_if_button(self, x):
