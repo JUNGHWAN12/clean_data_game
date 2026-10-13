@@ -10,6 +10,7 @@ import random
 import datetime
 import sys
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -327,6 +328,8 @@ REQUIRED_CARD_FIELDS = {
 }
 VALID_RISK_TYPES = {"safe", "copyright", "privacy", "bias"}
 VALID_ACTIONS = {"approve", "refine", "remove"}
+# card.json 제목 앞의 카드 번호("001 ")는 카드를 찾고 관리하기 위한 것이라 화면에는 보여주지 않는다.
+TITLE_NUMBER = re.compile(r"^\d+\s+")
 
 
 def load_card_deck() -> list[DataCard]:
@@ -365,7 +368,7 @@ def load_card_deck() -> list[DataCard]:
             raise ValueError(f"card.json의 {index}번째 카드의 difficulty/reward/penalty 값이 올바르지 않습니다.")
 
         loaded_cards.append(DataCard(
-            title=str(item["title"]),
+            title=TITLE_NUMBER.sub("", str(item["title"])) or str(item["title"]),
             content_type=str(item["content_type"]),
             source=str(item["source"]),
             license=str(item["license"]),
