@@ -98,6 +98,12 @@ FAST_SPAWN = 4.0       # 고속 처리 단계의 카드 간격(초)
 RUSH_SPAWN = 2.5       # 데이터 러시 단계의 카드 간격(초)
 BONUS_MULTIPLIER = 2   # 데이터 러시 보너스 카드 점수 배율
 PHASE_TOAST_TIME = 2.5
+# 컨베이어 카드 크기: 부스 뒤쪽 관람객도 읽을 수 있도록 카드와 글자를 크게 그린다.
+CARD_HALF = 92          # 카드 폭의 절반(카드 폭 184)
+CARD_BOTTOM, CARD_TOP = 478, 632
+CARD_GAP = 18           # 카드 사이 여백
+CARD_START_X = 140.0    # 새 카드가 나오는 위치(카드 가운데)
+SERVER_X = 1155         # AI 서버 영역의 왼쪽 끝
 # 연타 방지: 처리·선택 직후 잠시 처리 입력(1·2·3 키, 처리 버튼)을 받지 않는다(초).
 LOCK_AFTER_PROCESS = 0.5
 LOCK_AFTER_AUTO_SELECT = 0.8
@@ -701,7 +707,7 @@ class CleanDataGame(arcade.Window):
                             prototype.license, prototype.risk_types,
                             prototype.correct_action, prototype.explanation,
                             prototype.reward, prototype.penalty, prototype.difficulty,
-                            x=x if x is not None else 140.0)
+                            x=x if x is not None else CARD_START_X)
         new_card.hinted = self.progress() < ADAPT_TIME
         new_card.bonus = self.phase_index() == len(PHASES) - 1
         if "ai_approve" in self.upgrades and new_card.risk_key == "safe" and random.random() < AI_APPROVE_CHANCE:
@@ -765,9 +771,9 @@ class CleanDataGame(arcade.Window):
         elif PHASES[phase][1] == "데이터 러시":
             spawn_interval = RUSH_SPAWN
         self.spawn_timer += delta_time
-        # 카드 폭(152)과 여백(18)을 확보한 뒤에만 새 카드를 생성한다.
+        # 카드 폭과 여백을 확보한 뒤에만 새 카드를 생성한다.
         # 생성 주기보다 이동 속도가 빨라지는 후반에도 카드가 겹치지 않는다.
-        can_spawn = not self.cards or self.cards[-1].x >= 310
+        can_spawn = not self.cards or self.cards[-1].x >= CARD_START_X + 2 * CARD_HALF + CARD_GAP
         # 벨트가 비면 1초 뒤 바로 다음 카드를 보내, 빠른 플레이어가 더 많이 처리할 수 있게 한다.
         wait = 1.0 if not self.cards else spawn_interval
         if self.spawn_timer >= wait and can_spawn and len(self.cards) < 12:
@@ -783,7 +789,7 @@ class CleanDataGame(arcade.Window):
             if current.ai_approve and current.x >= 450:
                 self.ai_auto_approve(current)
             # 카드 오른쪽 끝이 서버 영역(1155)에 닿기 전에 자동 처리한다.
-            elif current.x > 1079:
+            elif current.x + CARD_HALF > SERVER_X - 4:
                 if "deid" in self.upgrades and "privacy" in current.risk_types:
                     self.process_card(current, "refine", automatic=True, actor="자동 비식별화")
                 else:
@@ -1085,7 +1091,7 @@ class CleanDataGame(arcade.Window):
             return
         # 카드 클릭: 컨베이어에 보이는 카드의 중심 좌표를 기준으로 선택한다.
         for current in reversed(self.cards):
-            if current.x - 78 <= x <= current.x + 78 and 480 <= y <= 602:
+            if current.x - CARD_HALF - 2 <= x <= current.x + CARD_HALF + 2 and CARD_BOTTOM <= y <= CARD_TOP:
                 self.select_card(current)
                 return
         if 38 <= y <= 108:
@@ -1501,23 +1507,24 @@ class CleanDataGame(arcade.Window):
 
     def draw_queue_card(self, current: DataCard):
         shown, color = self.shown_label(current)
-        left, right = current.x - 76, current.x + 76
-        rect(left + 3, 477, right + 3, 605, (7, 12, 23))
-        rect(left, 480, right, 602, (32, 46, 69))
-        rect(left, 592, right, 602, color)
+        left, right = current.x - CARD_HALF, current.x + CARD_HALF
+        bottom, top = CARD_BOTTOM, CARD_TOP
+        rect(left + 3, bottom - 3, right + 3, top + 3, (7, 12, 23))
+        rect(left, bottom, right, top, (32, 46, 69))
+        rect(left, top - 12, right, top, color)
         if current is self.selected:
-            outline(left - 4, 476, right + 4, 606, CYAN, 3)
+            outline(left - 4, bottom - 4, right + 4, top + 4, CYAN, 3)
         elif "copyright" in self.visible_risks(current):
             # 워터마크 스캐너: 저작권 신호가 있는 카드에 붉은 테두리
-            outline(left - 2, 478, right + 2, 604, RED, 2)
-        label(shown, current.x, 580, 11, color, "center", "center", True)
-        for index, title_line in enumerate(compact_card_title(current.title)):
-            label(title_line, left + 10, 555 - index * 14, 11, WHITE)
-        label(current.content_type, left + 10, 506, 11, MUTED)
+            outline(left - 2, bottom - 2, right + 2, top + 2, RED, 2)
+        label(shown, current.x, top - 30, 13, color, "center", "center", True)
+        for index, title_line in enumerate(compact_card_title(current.title, max_chars=9)):
+            label(title_line, left + 12, top - 64 - index * 21, 15, WHITE, bold=True)
+        label(current.content_type, left + 12, bottom + 16, 13, MUTED)
         if current.ai_approve:
-            label("AI 승인 대기", right - 10, 506, 10, CYAN, "right")
+            label("AI 승인 대기", right - 12, bottom + 16, 12, CYAN, "right")
         elif current.bonus:
-            label("BONUS ×2", right - 10, 506, 11, YELLOW, "right", bold=True)
+            label("BONUS ×2", right - 12, bottom + 16, 13, YELLOW, "right", bold=True)
 
     def draw_action_button(self, x, key, name, color):
         rect(x, 38, x + 230, 108, (31, 48, 69))
