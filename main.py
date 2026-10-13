@@ -108,11 +108,24 @@ RANK_FILE = APP_DIR / "ranking.json"
 RANK_SIZE = 10
 NAME_LENGTH = 3
 NAME_IDLE = 30.0       # 이니셜 입력을 방치하면 저장하지 않고 결과 화면으로 넘어간다
-# 랭킹판에 올릴 수 없는 이니셜(영문 욕설·비하 표현과 한국어 욕설의 로마자 약어)
+# 랭킹판에 올릴 수 없는 이니셜. 입력한 영문 3글자와 정확히 같으면 저장하지 않는다.
 BLOCKED_NAMES = {
-    "ASS", "FUK", "FUC", "FCK", "FKU", "FKN", "SEX", "SXY", "CUM", "TIT", "DIK", "DIC", "COK", "COC",
-    "PNS", "VAG", "FAG", "NIG", "NGR", "KKK", "NZI", "WTF", "STF", "SHT", "SUK", "XXX", "BCH",
-    "SIB", "SIP", "SBL", "SSB", "GSK", "GSE", "JOT", "JOS", "BYS", "BSN", "MCN", "JNA", "NOM", "YMN",
+    # 영어 욕설·비속어
+    "FUK", "FUC", "FCK", "FKU", "FKN", "FUQ", "FUX", "WTF", "STF", "GTF", "FFS", "FML", "MFR",
+    "SHT", "BCH", "ASS", "AZZ", "SOB",
+    # 성적 표현
+    "SEX", "SXY", "XXX", "CUM", "TIT", "PNS", "VAG", "DIK", "DIC", "COK", "COC", "SUK",
+    "DCK", "JIZ", "ANL", "FAP", "DTF", "SLT", "PRN", "POR", "NUD", "HOE", "PUS",
+    # 혐오·차별 표현
+    "FAG", "NIG", "NGR", "NGA", "KKK", "NZI", "NAZ", "JAP", "CNK", "GOK", "RTD", "HTL", "GAY", "LES",
+    # 자해·폭력
+    "KYS", "KMS", "DIE", "KIL",
+    # 한국어 욕설의 로마자 약어
+    "SIB", "SIP", "SBL", "SSB", "CBL", "GSK", "GSE", "BYS", "BSN", "MCN", "JNA", "JOT", "JOS",
+    "JRL", "YMB", "NGM", "NOM", "YMN", "JMT", "ILB",
+    # 한글 자판 위치로 친 욕설: 한글 자판대로 '시발'을 치면 영문 TLQKF가 입력되어 앞 3글자 TLQ가 된다.
+    "TLQ", "QUD", "WHS", "WHW", "RJW", "EKR", "TPR", "QHW", "WKW",
+    "ROT", "TOR", "ALC", "WLF", "DOA", "WHF", "SUS", "QUS", "DUT", "QKQ",
 }
 GRADE_ORDER = "SABCD"
 GRADE_COLORS = {"S": GREEN, "A": CYAN, "B": YELLOW, "C": ORANGE, "D": RED}
@@ -520,8 +533,10 @@ class CleanDataGame(arcade.Window):
         if not isinstance(data, list):
             return []
         # 진행 요원이 ranking.json을 직접 고치다 형식이 틀린 기록은 건너뛰어, 메뉴 화면에서 꺼지지 않게 한다.
+        # 금칙어 목록을 늘리기 전에 저장된 기록도 금칙어 이니셜이면 랭킹판에 보이지 않게 한다.
         return [e for e in data if isinstance(e, dict) and e.get("grade") in tuple(GRADE_ORDER)
-                and isinstance(e.get("score"), int) and isinstance(e.get("name"), str)]
+                and isinstance(e.get("score"), int) and isinstance(e.get("name"), str)
+                and e["name"] not in BLOCKED_NAMES]
 
     @staticmethod
     def rank_key(entry: dict):
