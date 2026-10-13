@@ -581,6 +581,11 @@ class CleanDataGame(arcade.Window):
         return keys
 
     def submit_name(self):
+        if len(self.name_input) < NAME_LENGTH:
+            # 랭킹에는 영문 이니셜을 꼭 3글자로 남긴다.
+            self.name_warning = f"영문 이니셜 {NAME_LENGTH}글자를 모두 입력해 주세요."
+            self.play("wrong", 0.4)
+            return
         if self.name_input in BLOCKED_NAMES:
             self.name_warning = "사용할 수 없는 이니셜입니다. 다른 글자로 입력해 주세요."
             self.name_input = ""
@@ -923,7 +928,7 @@ class CleanDataGame(arcade.Window):
                 self.type_letter(chr(key).upper())
             elif key == arcade.key.BACKSPACE:
                 self.name_input = self.name_input[:-1]
-            elif key in (arcade.key.ENTER, arcade.key.NUM_ENTER) and self.name_input:
+            elif key in (arcade.key.ENTER, arcade.key.NUM_ENTER):
                 self.submit_name()
             elif key == arcade.key.ESCAPE:
                 self.show_result()
@@ -1034,7 +1039,7 @@ class CleanDataGame(arcade.Window):
                     else:
                         self.type_letter(char)
                     return
-            if 400 < x < 630 and 150 < y < 210 and self.name_input:
+            if 400 < x < 630 and 150 < y < 210:
                 self.submit_name()
             elif 650 < x < 880 and 150 < y < 210:
                 self.show_result()
@@ -1694,8 +1699,9 @@ class CleanDataGame(arcade.Window):
             label("키보드로 입력하거나 화면의 글자를 클릭하세요", 640, 262, 13, MUTED, "center", "center")
         left_time = max(0, int(NAME_IDLE - self.idle_time))
         label(f"{left_time}초 동안 입력이 없으면 저장하지 않고 넘어갑니다", 640, 238, 11, (96, 115, 145), "center", "center")
-        rect(400, 150, 630, 210, CYAN if self.name_input else PANEL_LIGHT)
-        label("ENTER  저장", 515, 180, 17, BG if self.name_input else MUTED, "center", "center", True)
+        complete = len(self.name_input) == NAME_LENGTH
+        rect(400, 150, 630, 210, CYAN if complete else PANEL_LIGHT)
+        label("ENTER  저장", 515, 180, 17, BG if complete else MUTED, "center", "center", True)
         rect(650, 150, 880, 210, PANEL_LIGHT)
         label("ESC  건너뛰기", 765, 180, 17, WHITE, "center", "center", True)
 
