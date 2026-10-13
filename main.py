@@ -36,7 +36,11 @@ PROJECT_POLICY = "교육용 · 비상업"
 # card.json의 점수 값을 기획서 점수 규모로 환산하는 배율
 SCORE_SCALE = 10
 PENALTY_SCALE = 12
-FONT = ("Malgun Gothic", "맑은 고딕", "Arial")
+# 글꼴: assets/fonts의 IBM Plex Sans KR(SIL OFL 1.1)을 게임과 함께 배포해 부스 PC에 설치하지 않아도 같은 모양으로 보인다.
+# 글꼴 파일이 없으면 Windows 기본 한글 글꼴(맑은 고딕)로 그린다.
+FONT_DIR = APP_DIR / "assets" / "fonts"
+FONT_FILES = ("IBMPlexSansKR-Regular.ttf", "IBMPlexSansKR-Bold.ttf")
+FONT = ("IBM Plex Sans KR", "Malgun Gothic", "맑은 고딕", "Arial")
 
 BG = (10, 16, 31)
 PANEL = (20, 29, 49)
@@ -169,6 +173,35 @@ def josa(word: str, with_final: str, without_final: str) -> str:
     return word + (with_final if has_final else without_final)
 
 
+def load_fonts():
+    for name in FONT_FILES:
+        try:
+            arcade.load_font(FONT_DIR / name)
+        except Exception:
+            pass  # 글꼴 파일이 없거나 읽지 못하면 FONT의 다음 글꼴을 쓴다.
+
+
+def disable_ime(window: arcade.Window):
+    """한글 입력 상태(한/영 키)에서도 영문 단축키(Q·W·E·R, T, M, 이니셜 등)가 동작하도록 창의 IME를 끈다.
+
+    Windows는 한글 입력 상태에서 영문 키를 IME가 가로채 게임에 다른 키 코드를 보내므로,
+    방문객이 한/영 키를 눌러도 단축키가 막히지 않게 한다.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        associate = ctypes.windll.imm32.ImmAssociateContext
+        associate.argtypes = (wintypes.HWND, wintypes.HANDLE)
+        associate.restype = wintypes.HANDLE
+        for hwnd in (getattr(window, "_hwnd", None), getattr(window, "_view_hwnd", None)):
+            if hwnd:
+                associate(hwnd, None)
+    except Exception:
+        pass  # IME를 끄지 못해도 게임은 계속한다. 이때는 한/영 키를 영문으로 맞춘다.
+
+
 def rect(left: float, bottom: float, right: float, top: float, color):
     arcade.draw_lrbt_rectangle_filled(left, right, bottom, top, color)
 
@@ -187,13 +220,15 @@ def label(text: str, x: float, y: float, size: float = 16, color=WHITE,
     window = arcade.get_window()
     window.default_camera.use()
     scale_x, scale_y = window.width / UI_WIDTH, window.height / UI_HEIGHT
+    # 글자 크기는 가로·세로 배율 중 작은 쪽을 따른다. 16:9보다 좁은 모니터(4:3, 5:4)에서도 글자가 상자 밖으로 넘치지 않는다.
+    font_scale = min(scale_x, scale_y)
     position = (x * scale_x, y * scale_y)
     # 위치는 저장 기준에서 빼서, 움직이는 카드의 글자도 같은 객체를 옮겨 다시 쓴다.
     key = (str(text), size, tuple(color), anchor_x, anchor_y, bold, window.width, window.height)
     text_object = _TEXT_CACHE.get(key)
     if text_object is None:
         # Text 객체를 만드는 데는 그리는 것보다 수십 배 오래 걸리므로, 한 번 만든 글자는 저장해 다시 쓴다.
-        text_object = arcade.Text(str(text), position[0], position[1], color, size * scale_y,
+        text_object = arcade.Text(str(text), position[0], position[1], color, size * font_scale,
                                   font_name=FONT, anchor_x=anchor_x, anchor_y=anchor_y, bold=bold)
         if len(_TEXT_CACHE) >= TEXT_CACHE_SIZE:
             _TEXT_CACHE.pop(next(iter(_TEXT_CACHE)))  # 가장 오래된 글자부터 버린다.
@@ -285,6 +320,7 @@ class DataCard:
 
 
 CARD_FILE = APP_DIR / "card.json"
+CARD_ERROR_EXIT = 3   # card.json 형식 오류로 끝날 때의 종료 코드(run_booth.bat이 보고 다시 켜지 않는다)
 REQUIRED_CARD_FIELDS = {
     "title", "content_type", "source", "license", "risk_types",
     "correct_action", "explanation", "reward", "penalty", "difficulty",
@@ -343,13 +379,13 @@ def load_card_deck() -> list[DataCard]:
     return loaded_cards
 
 
-# card.json의 카드를 게임 덱으로 사용한다.
-CARD_DECK = load_card_deck()
-
-
 class CleanDataGame(arcade.Window):
-    def __init__(self, fullscreen: bool = False, booth: bool = False):
+    def __init__(self, card_deck: list[DataCard], fullscreen: bool = False, booth: bool = False):
+        load_fonts()
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False, fullscreen=fullscreen)
+        disable_ime(self)
+        # card.json의 카드를 게임 덱으로 사용한다.
+        self.card_deck = card_deck
         # 부스 모드에서는 Alt+F4나 창 닫기로 꺼지지 않고, 진행 요원 키(Ctrl+Shift+Q)로만 종료한다.
         self.booth = booth
         self.allow_close = not booth
@@ -476,9 +512,13 @@ class CleanDataGame(arcade.Window):
         try:
             with RANK_FILE.open("r", encoding="utf-8") as file:
                 data = json.load(file)
-            return data if isinstance(data, list) else []
         except (OSError, ValueError):
             return []
+        if not isinstance(data, list):
+            return []
+        # 진행 요원이 ranking.json을 직접 고치다 형식이 틀린 기록은 건너뛰어, 메뉴 화면에서 꺼지지 않게 한다.
+        return [e for e in data if isinstance(e, dict) and e.get("grade") in tuple(GRADE_ORDER)
+                and isinstance(e.get("score"), int) and isinstance(e.get("name"), str)]
 
     @staticmethod
     def rank_key(entry: dict):
@@ -578,7 +618,7 @@ class CleanDataGame(arcade.Window):
         self.selected = None
         self.deck = [DataCard(c.title, c.content_type, c.source, c.license,
                               c.risk_types, c.correct_action, c.explanation,
-                              c.reward, c.penalty, c.difficulty) for c in CARD_DECK]
+                              c.reward, c.penalty, c.difficulty) for c in self.card_deck]
         random.shuffle(self.deck)
         self.deck_index = 0
         self.spawn_timer = 0.0
@@ -1198,7 +1238,7 @@ class CleanDataGame(arcade.Window):
         label("그런데 데이터에 문제가 있으면?", 145, 368, 17, WHITE, bold=True)
         problems = [("© 허락 없이 가져온 작품", "AI가 남의 그림·글을 베낀 결과를 만들어요", RED),
                     ("▣ 이름·전화번호 같은 개인정보", "AI가 다른 사람의 개인정보를 말해 버려요", BLUE),
-                    ("⚖ 한쪽으로 치우친 자료", "AI가 편견이 담긴 답을 해요", PURPLE)]
+                    ("◈ 한쪽으로 치우친 자료", "AI가 편견이 담긴 답을 해요", PURPLE)]
         for index, (cause, effect, color) in enumerate(problems):
             y = 334 - index * 30
             label(cause, 175, y, 14, color, bold=True)
@@ -1397,7 +1437,7 @@ class CleanDataGame(arcade.Window):
         if risks:
             label("  ".join(self.risk_name(r) for r in risks), 430, 222, 13, color)
         elif current.hinted or self.has_all_detectors():
-            label("✓ 감지된 신호 없음", 430, 222, 13, GREEN)
+            label("√ 감지된 신호 없음", 430, 222, 13, GREEN)
         elif self.upgrades & set(RISK_TOOLS.values()):
             label("보유한 도구로는 감지되지 않음", 430, 222, 13, MUTED)
         else:
@@ -1434,7 +1474,7 @@ class CleanDataGame(arcade.Window):
 
     @staticmethod
     def risk_name(risk):
-        return {"copyright": "© 저작권", "privacy": "▣ 개인정보", "bias": "⚖ 편향", "safe": "✓ 안전"}[risk]
+        return {"copyright": "© 저작권", "privacy": "▣ 개인정보", "bias": "◈ 편향", "safe": "√ 안전"}[risk]
 
     def draw_queue_card(self, current: DataCard):
         shown, color = self.shown_label(current)
@@ -1573,7 +1613,7 @@ class CleanDataGame(arcade.Window):
         if good is None:
             label("학습한 데이터가 없습니다", x + 175, y + 70, 13, MUTED, "center", "center")
             return
-        label("✓ 안전" if good else "! 문제 발생", x + 336, y + 152, 12, GREEN if good else RED, "right", bold=True)
+        label("√ 안전" if good else "! 문제 발생", x + 336, y + 152, 12, GREEN if good else RED, "right", bold=True)
 
     def draw_ai_chatbot(self, x, y, good):
         self.draw_ai_panel(x, y, "챗봇에게 물어보기", good)
@@ -1601,7 +1641,7 @@ class CleanDataGame(arcade.Window):
         for i in range(4):
             arcade.draw_line(left + 20 + i * 70, bottom + 30, left + 60 + i * 70, bottom + 30, (200, 230, 255), 2)
         if good:
-            label("✓ 권리 문제가 없는 이미지", left + 8, bottom + 8, 11, WHITE)
+            label("√ 권리 문제가 없는 이미지", left + 8, bottom + 8, 11, WHITE)
         else:
             # 학습한 유료 이미지의 워터마크와 서명 흔적이 그대로 남는다.
             for row in range(3):
@@ -1720,19 +1760,29 @@ class CleanDataGame(arcade.Window):
         rect(x, y, x + 190 * value / 100, y + 8, color)
 
 
+def write_error_log():
+    with (APP_DIR / "error.log").open("a", encoding="utf-8") as file:
+        file.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{traceback.format_exc()}")
+
+
 def main():
     # 부스에서는 전체 화면으로 실행한다. 개발·점검 때는 --window 옵션으로 창 모드 실행.
     booth = "--window" not in sys.argv
     try:
-        game = CleanDataGame(fullscreen=booth, booth=booth)
+        card_deck = load_card_deck()
+    except Exception:
+        # card.json을 고치다 형식이 틀리면 다시 켜도 같은 오류가 나므로, 원인을 남기고 3으로 끝내 run_booth.bat이 다시 켜지 않게 한다.
+        write_error_log()
+        sys.exit(CARD_ERROR_EXIT)
+    try:
+        game = CleanDataGame(card_deck, fullscreen=booth, booth=booth)
         if "--smoke-test" in sys.argv:
             # 실행 파일 점검용: 3초 뒤 스스로 정상 종료한다.
             arcade.schedule_once(lambda _dt: game.staff_quit(), 3.0)
         arcade.run()
     except Exception:
         # 오류로 꺼지면 원인을 error.log에 남기고 0이 아닌 코드로 끝내, 실행 스크립트가 다시 켜게 한다.
-        with (APP_DIR / "error.log").open("a", encoding="utf-8") as file:
-            file.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{traceback.format_exc()}")
+        write_error_log()
         sys.exit(1)
     sys.exit(0)
 
