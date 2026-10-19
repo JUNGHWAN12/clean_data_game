@@ -10,7 +10,9 @@ import random
 import datetime
 import sys
 import json
+import os
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -1845,10 +1847,21 @@ def game_command(game: dict) -> Optional[tuple[list[str], Path]]:
         return base + ["--from-launcher", *extra, *args], APP_DIR
     if not isinstance(command, str) or not command.strip():
         return None
-    path = (APP_DIR / command).resolve()
+    # resolve()는 가상환경의 python 바로가기를 원본 python으로 바꿔 설치한 패키지를 못 찾게 하므로 쓰지 않는다.
+    path = Path(os.path.normpath(APP_DIR / command))
     if not path.is_file():
+        # 경로가 아니라 "python"처럼 이름만 적었으면 PC에 설치된 프로그램을 찾는다.
+        found = shutil.which(command)
+        if found is None:
+            return None
+        path = Path(found)
+    # 작업 폴더: booth.json의 "cwd"(이 게임 폴더 기준), 없으면 실행 파일이 있는 폴더.
+    # Python으로 실행하는 게임은 "cwd"에 게임 폴더를 적고 "args"에 main.py를 적는다.
+    cwd = game.get("cwd")
+    folder = Path(os.path.normpath(APP_DIR / cwd)) if isinstance(cwd, str) and cwd.strip() else path.parent
+    if not folder.is_dir():
         return None
-    return [str(path), *args], path.parent
+    return [str(path), *args], folder
 
 
 class GameLauncher(arcade.Window):

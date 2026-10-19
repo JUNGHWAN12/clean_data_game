@@ -53,8 +53,8 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 
 부스 노트북 4대는 각각 세 게임을 모두 돌립니다. 실행 파일 폴더에 `booth.json`이 있으면 `run_booth.bat`이 게임 1·2·3을 고르는 시작 화면(런처)을 띄웁니다. 고른 게임이 꺼지면 런처 화면으로 돌아옵니다.
 
-1. 세 게임 폴더를 나란히 둡니다: `Booth\CleanDataLabeler`, `Booth\Game2`, `Booth\Game3`
-2. `CleanDataLabeler` 폴더의 `booth.example.json`을 `booth.json`으로 복사하고, PC 이름과 다른 두 게임의 이름·설명·실행 파일 경로를 고칩니다. 경로는 `CleanDataLabeler` 폴더 기준이고 `"command": "self"`는 이 게임입니다.
+1. 세 게임 폴더를 나란히 둡니다: `Booth\CleanDataLabeler`, `Booth\data_packet-runner`, `Booth\password_guardian`
+2. `CleanDataLabeler` 폴더의 `booth.example.json`을 `booth.json`으로 복사하고, PC 이름과 다른 두 게임의 이름·설명·실행 파일 경로를 고칩니다. 경로는 `CleanDataLabeler` 폴더 기준이고 `"command": "self"`는 이 게임입니다. Python으로 실행하는 게임은 `"command": "python"`(PC에 설치된 Python, 또는 가상환경의 `python.exe` 경로), `"args"`에 실행할 파일, `"cwd"`에 게임 폴더를 적습니다.
 3. `run_booth.bat`을 실행합니다.
 
 | 화면 | 키 | 동작 |

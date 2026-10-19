@@ -2,7 +2,9 @@
   "pc_name": "PC 1",
   "games": [
     {"name": "클린 데이터 라벨러", "description": "AI가 배울 데이터를 직접 검수해 봅니다", "command": "self"},
-    {"name": "게임 2 이름", "description": "한 줄 설명(40글자 이내)", "command": "../Game2/Game2.exe", "args": []},
-    {"name": "게임 3 이름", "description": "한 줄 설명(40글자 이내)", "command": "../Game3/Game3.exe", "args": []}
+    {"name": "데이터 패킷 러너", "description": "장애물을 넘어 데이터를 서버까지 전달하세요",
+     "command": "python", "args": ["main.py", "--booth"], "cwd": "../data_packet-runner"},
+    {"name": "패스워드 가디언", "description": "보안 선택으로 금고를 지키는 슈팅 게임",
+     "command": "python", "args": ["run_game.py", "--fullscreen"], "cwd": "../password_guardian"}
   ]
 }
