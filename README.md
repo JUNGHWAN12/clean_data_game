@@ -70,6 +70,16 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 - 다른 두 게임의 런처용 실행 옵션: 데이터 패킷 러너 `--launcher`(한 판이 끝나거나 시작 화면에서 ESC, 또는 60초 동안 입력이 없으면 런처로), 패스워드 가디언 `--booth --fullscreen`(결과 화면이 끝나거나 시작 화면에서 ESC, 게임 중 Shift+ESC면 런처로).
 - 다른 게임 제작자에게 전달할 조건은 '부스 게임 런처 연동 안내' 문서에 정리되어 있습니다.
 
+### 게임이 늦게 켜질 때
+
+- 런처는 고른 게임의 창이 뜰 때까지 "불러오는 중" 화면을 보여 줍니다(최대 30초).
+- Windows 보안(백신)이 실행할 때마다 파일을 검사해 늦어질 수 있습니다. 부스 노트북에서 관리자 PowerShell로 `Booth` 폴더를 검사 예외에 넣으면 빨라집니다(학교 보안 정책을 먼저 확인하세요).
+
+  ```powershell
+  Add-MpPreference -ExclusionPath "C:\Booth"
+  ```
+- 복사한 뒤 처음 켤 때는 검사 때문에 특히 오래 걸립니다. 행사 전에 세 게임을 한 번씩 켜 두면 당일에는 빨라집니다.
+
 ### GitHub Actions로 부스 묶음 받기
 
 `main`에 올리거나 Actions 탭에서 **"부스 실행 파일 만들기 (런처 + 세 게임)"** 를 수동 실행하면, Windows에서 세 게임을 빌드해 `Booth` 폴더 하나로 묶어 줍니다.

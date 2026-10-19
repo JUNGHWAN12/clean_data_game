@@ -1872,6 +1872,34 @@ def game_command(game: dict) -> Optional[tuple[list[str], Path]]:
     return [str(path), *args], folder
 
 
+LAUNCH_WAIT = 30.0   # 게임 창이 뜨기를 기다리는 최대 시간(초). 넘으면 런처 창을 닫고 게임이 끝나기를 기다린다.
+
+
+def process_window_shown(pid: int) -> bool:
+    """그 프로세스의 창이 화면에 떴는지. Windows가 아니면 바로 True(기다리지 않음)."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def check(hwnd, _lparam):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value == pid and user32.IsWindowVisible(hwnd):
+                found.append(hwnd)
+                return False
+            return True
+
+        user32.EnumWindows(check, 0)
+        return bool(found)
+    except Exception:
+        return True   # 확인하지 못하면 기다리지 않고 지금처럼 런처를 닫는다.
+
+
 class GameLauncher(arcade.Window):
     """부스 시작 화면: 한 PC에서 세 게임을 고른다. 고른 게임이 끝나면 다시 이 화면을 띄운다."""
 
@@ -1892,6 +1920,10 @@ class GameLauncher(arcade.Window):
         self.allow_close = not booth
         self.choice: Optional[int] = None
         self.quit_all = False
+        # 고른 게임을 실행한 프로세스. 게임 창이 뜰 때까지 '불러오는 중' 화면을 보여 바탕화면이 비지 않게 한다.
+        self.process: Optional[subprocess.Popen] = None
+        self.loading_time = 0.0
+        self.closing = False   # 창을 닫은 뒤 같은 프레임의 그리기가 닫힌 창에 그리지 않게 한다.
 
     def on_resize(self, width: int, height: int):
         super().on_resize(width, height)
@@ -1916,15 +1948,35 @@ class GameLauncher(arcade.Window):
         if self.commands[index] is None:
             self.notice = f"'{self.game_name(index)}' 실행 파일을 찾을 수 없습니다. booth.json의 경로를 확인하세요."
             return
+        command, cwd = self.commands[index]
+        try:
+            self.process = subprocess.Popen(command, cwd=cwd)
+        except OSError:
+            self.notice = f"'{self.game_name(index)}'을(를) 실행하지 못했습니다. 진행 요원에게 알려 주세요."
+            return
         self.choice = index
-        self.allow_close = True
-        self.close()
+        self.notice = ""
+        self.loading_time = 0.0
+
+    def on_update(self, delta_time: float):
+        # 닫힌 창에 남은 갱신 예약이 한 번 더 불릴 수 있다. 다시 닫으면 새로 연 런처 창까지 끊기므로 건너뛴다.
+        if self.process is None or self.closing:
+            return
+        self.loading_time += delta_time
+        # 게임 창이 뜨거나, 게임이 바로 끝났거나, 너무 오래 걸리면 런처 창을 닫는다.
+        if (self.process.poll() is not None or self.loading_time >= LAUNCH_WAIT
+                or process_window_shown(self.process.pid)):
+            self.allow_close = True
+            self.closing = True
+            self.close()
 
     def game_name(self, index: int) -> str:
         name = self.games[index].get("name")
         return str(name)[:12] if name else f"게임 {index + 1}"
 
     def on_key_press(self, key, modifiers):
+        if self.process is not None:
+            return   # 게임을 불러오는 동안에는 키를 받지 않는다.
         if key == arcade.key.Q and modifiers & arcade.key.MOD_CTRL and modifiers & arcade.key.MOD_SHIFT:
             # 진행 요원: 런처까지 끄면 부스 프로그램이 완전히 끝난다.
             self.quit_all = True
@@ -1941,6 +1993,8 @@ class GameLauncher(arcade.Window):
             self.pick(keys[key])
 
     def on_mouse_press(self, x, y, button, modifiers):
+        if self.process is not None:
+            return
         x, y, _ = self.camera.unproject((x, y))
         for index in range(len(self.games)):
             left, bottom, right, top = self.slot(index)
@@ -1949,6 +2003,8 @@ class GameLauncher(arcade.Window):
                 return
 
     def on_draw(self):
+        if self.closing:
+            return
         self.clear()
         self.camera.use()
         label("AI 윤리 체험 부스", UI_WIDTH / 2, 700, 34, WHITE, "center", "center", True)
@@ -1975,6 +2031,13 @@ class GameLauncher(arcade.Window):
             label(self.notice, UI_WIDTH / 2, 170, 15, RED, "center", "center")
         if self.pc_name:
             label(self.pc_name, UI_WIDTH - 40, 40, 14, MUTED, "right", "center", True)
+        if self.process is not None:
+            rect(0, 0, UI_WIDTH, UI_HEIGHT, (10, 16, 31, 235))
+            dots = "." * (int(self.loading_time * 2) % 4)
+            label(f"'{self.game_name(self.choice)}'을(를) 불러오는 중입니다{dots}", UI_WIDTH / 2, 430, 26, WHITE,
+                  "center", "center", True)
+            label("처음 켤 때는 조금 더 걸릴 수 있어요. 잠시만 기다려 주세요.", UI_WIDTH / 2, 380, 16, MUTED,
+                  "center", "center")
 
 
 def run_launcher(booth: bool):
@@ -1985,17 +2048,11 @@ def run_launcher(booth: bool):
         games = config.get("games", [])
         launcher = GameLauncher(games, config.get("pc_name", ""), notice, fullscreen=booth, booth=booth)
         arcade.run()
-        if launcher.quit_all or launcher.choice is None:
-            return
+        if launcher.process is None:
+            return   # 진행 요원이 런처를 끔(Ctrl+Shift+Q)
         name = launcher.game_name(launcher.choice)
-        command, cwd = launcher.commands[launcher.choice]
-        try:
-            code = subprocess.run(command, cwd=cwd).returncode
-        except OSError:
-            code = None
-        if code is None:
-            notice = f"'{name}'을(를) 실행하지 못했습니다. 진행 요원에게 알려 주세요."
-        elif code == CARD_ERROR_EXIT and games[launcher.choice].get("command") == "self":
+        code = launcher.process.wait()   # 게임이 끝날 때까지 기다린다.
+        if code == CARD_ERROR_EXIT and games[launcher.choice].get("command") == "self":
             notice = f"'{name}'의 card.json 형식이 올바르지 않습니다. error.log를 확인하세요."
         elif code != 0:
             notice = f"'{name}'이(가) 비정상 종료되었습니다(코드 {code}). 다시 고를 수 있습니다."
