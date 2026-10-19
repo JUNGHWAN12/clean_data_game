@@ -1900,6 +1900,29 @@ def process_window_shown(pid: int) -> bool:
         return True   # 확인하지 못하면 기다리지 않고 지금처럼 런처를 닫는다.
 
 
+def restore_to_front(window: arcade.Window):
+    """Windows에서 창이 최소화되어 있으면 원래 크기로 돌리고 맨 앞으로 가져온다.
+
+    배치 파일의 검은 창처럼 다른 창이 앞에 있을 때 새로 뜬 전체 화면 창이 앞으로 오지 못하고
+    작업 표시줄로 내려가는 일이 있다(Windows 포그라운드 잠금). Alt 키를 한 번 눌렀다 떼면
+    Windows가 이 창을 앞으로 가져오도록 허락한다.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hwnd = getattr(window, "_hwnd", None)
+        if not hwnd or not user32.IsIconic(hwnd):
+            return
+        user32.ShowWindow(hwnd, 9)                 # SW_RESTORE
+        user32.keybd_event(0x12, 0, 0, 0)          # Alt 누르기
+        user32.SetForegroundWindow(hwnd)
+        user32.keybd_event(0x12, 0, 2, 0)          # Alt 떼기 (KEYEVENTF_KEYUP)
+    except Exception:
+        pass   # 앞으로 가져오지 못해도 런처는 계속한다. 작업 표시줄에서 눌러 열 수 있다.
+
+
 class GameLauncher(arcade.Window):
     """부스 시작 화면: 한 PC에서 세 게임을 고른다. 고른 게임이 끝나면 다시 이 화면을 띄운다."""
 
@@ -1924,6 +1947,7 @@ class GameLauncher(arcade.Window):
         self.process: Optional[subprocess.Popen] = None
         self.loading_time = 0.0
         self.closing = False   # 창을 닫은 뒤 같은 프레임의 그리기가 닫힌 창에 그리지 않게 한다.
+        self.front_timer = 0.5  # 처음 갱신 때 바로 최소화 여부를 확인한다
 
     def on_resize(self, width: int, height: int):
         super().on_resize(width, height)
@@ -1959,9 +1983,16 @@ class GameLauncher(arcade.Window):
         self.loading_time = 0.0
 
     def on_update(self, delta_time: float):
-        # 닫힌 창에 남은 갱신 예약이 한 번 더 불릴 수 있다. 다시 닫으면 새로 연 런처 창까지 끊기므로 건너뛴다.
-        if self.process is None or self.closing:
+        if self.closing:
             return
+        if self.process is None:
+            # 게임을 고르기 전에는 런처가 최소화되어 있으면 다시 화면 앞으로 가져온다(0.5초마다 확인).
+            self.front_timer += delta_time
+            if self.front_timer >= 0.5:
+                self.front_timer = 0.0
+                restore_to_front(self)
+            return
+        # 닫힌 창에 남은 갱신 예약이 한 번 더 불릴 수 있다. 다시 닫으면 새로 연 런처 창까지 끊기므로 위에서 건너뛴다.
         self.loading_time += delta_time
         # 게임 창이 뜨거나, 게임이 바로 끝났거나, 너무 오래 걸리면 런처 창을 닫는다.
         if (self.process.poll() is not None or self.loading_time >= LAUNCH_WAIT

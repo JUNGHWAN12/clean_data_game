@@ -86,7 +86,8 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 
 1. 저장소의 **Actions** 탭 → 실행된 작업 → 아래 **Artifacts**의 `Booth-windows`를 내려받습니다(30일 보관).
 2. 압축을 풀어 노트북에 복사하고, `Booth\CleanDataLabeler\booth.json`의 `pc_name`만 PC마다 바꿉니다.
-3. `Booth\CleanDataLabeler\run_booth.bat`을 실행합니다.
+3. `Booth\START_BOOTH.exe`를 더블클릭합니다. `run_booth.bat`과 같은 일(런처 실행, 오류로 꺼지면 3초 뒤 다시 켜기, card.json 오류면 안내 후 멈춤)을 하며, 학생들은 이 파일 하나만 쓰면 됩니다. 안내는 `Booth\README.txt`에도 있습니다.
+- 런처가 최소화된 채로 뜨면(다른 창이 앞에 있을 때 Windows가 새 창을 앞으로 보내지 않는 경우) 런처가 스스로 원래 크기로 돌아와 맨 앞에 옵니다.
 
 다른 두 게임은 각 저장소의 `main`을 받아 빌드합니다. 수동 실행 때는 브랜치를 고를 수 있습니다. 빌드 중에는 `CleanDataLabeler.exe --check`, `PacketRunner.exe --check`로 파일과 게임 경로를 점검합니다(`--check`는 창 없이 확인하고 `check.log`에 결과를 남깁니다).
 

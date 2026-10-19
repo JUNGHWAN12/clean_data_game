@@ -1,6 +1,6 @@
 # 부스 노트북용 Windows 실행 파일 묶음을 만든다: 런처(클린 데이터 라벨러) + 데이터 패킷 러너 + 패스워드 가디언.
 # 결과: 이 작업 페이지 아래 Artifacts의 'Booth-windows'
-#   압축을 풀면 Booth 폴더 → 노트북에 복사 → CleanDataLabeler\booth.json의 pc_name만 바꾸고 run_booth.bat 실행
+#   압축을 풀면 Booth 폴더 → 노트북에 복사 → CleanDataLabeler\booth.json의 pc_name만 바꾸고 START_BOOTH.exe 실행
 # 다른 두 게임은 각 저장소의 main(또는 수동 실행 때 고른 브랜치)을 받아 함께 빌드한다.
 name: 부스 실행 파일 만들기 (런처 + 세 게임)
 
@@ -65,11 +65,17 @@ jobs:
         working-directory: src/password_guardian
         run: python -m PyInstaller --noconfirm --clean --distpath ../../Booth --workpath ../../build/guardian PasswordGuardian.spec
 
+      - name: 부스 시작 파일(START_BOOTH.exe) 빌드
+        run: python -m PyInstaller --noconfirm --onefile --windowed --name START_BOOTH --distpath build/start --workpath build/start-work --specpath build/start src/CleanDataLabeler/tools/booth_start.py
+
       - name: Booth 폴더로 모으기
         shell: pwsh
         run: |
           Copy-Item -Recurse "src\CleanDataLabeler\dist\CleanDataLabeler" "Booth\CleanDataLabeler"
           Copy-Item "Booth\CleanDataLabeler\booth.example.json" "Booth\CleanDataLabeler\booth.json"
+          # 학생들은 Booth 폴더 맨 위의 START_BOOTH.exe만 더블클릭한다
+          Copy-Item "build\start\START_BOOTH.exe" "Booth\START_BOOTH.exe"
+          Copy-Item "src\CleanDataLabeler\tools\booth_readme.txt" "Booth\README.txt"
           Get-ChildItem Booth | Select-Object Name
 
       - name: 설치 점검 (--check, 종료 코드 확인)
@@ -83,6 +89,7 @@ jobs:
           Get-Content "Booth\PacketRunner\logs\game.log"
           if ($p.ExitCode -ne 0) { throw "데이터 패킷 러너 점검 실패: 종료 코드 $($p.ExitCode)" }
           if (-not (Test-Path "Booth\PasswordGuardian\PasswordGuardian.exe")) { throw "PasswordGuardian.exe가 없습니다" }
+          if (-not (Test-Path "Booth\START_BOOTH.exe")) { throw "START_BOOTH.exe가 없습니다" }
           # 점검하며 생긴 파일은 지워 깨끗한 상태로 올린다
           Remove-Item -Force "Booth\CleanDataLabeler\check.log" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "Booth\PacketRunner\logs", "Booth\PacketRunner\data" -ErrorAction SilentlyContinue
