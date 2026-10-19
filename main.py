@@ -1875,8 +1875,8 @@ def game_command(game: dict) -> Optional[tuple[list[str], Path]]:
 LAUNCH_WAIT = 30.0   # 게임 창이 뜨기를 기다리는 최대 시간(초). 넘으면 런처 창을 닫고 게임이 끝나기를 기다린다.
 
 
-def process_window_shown(pid: int) -> bool:
-    """그 프로세스의 창이 화면에 떴는지. Windows가 아니면 바로 True(기다리지 않음)."""
+def find_process_window(pid: int):
+    """그 프로세스의 보이는 창 핸들. 아직 없으면 None. Windows가 아니거나 확인할 수 없으면 True(기다리지 않음)."""
     if sys.platform != "win32":
         return True
     try:
@@ -1895,7 +1895,7 @@ def process_window_shown(pid: int) -> bool:
             return True
 
         user32.EnumWindows(check, 0)
-        return bool(found)
+        return found[0] if found else None
     except Exception:
         return True   # 확인하지 못하면 기다리지 않고 지금처럼 런처를 닫는다.
 
@@ -1921,6 +1921,33 @@ def restore_to_front(window: arcade.Window):
         user32.keybd_event(0x12, 0, 2, 0)          # Alt 떼기 (KEYEVENTF_KEYUP)
     except Exception:
         pass   # 앞으로 가져오지 못해도 런처는 계속한다. 작업 표시줄에서 눌러 열 수 있다.
+
+
+def bring_to_front(hwnd) -> None:
+    """게임 창을 맨 앞으로 올린다. 최소화되어 있으면 원래 크기로 되돌린다.
+    Windows는 뒤에서 막 켜진 프로그램이 스스로 앞으로 나오는 것을 막으므로, 지금 앞에 있는 런처가 넘겨준다."""
+    if sys.platform != "win32" or hwnd is True or not hwnd:
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        SW_RESTORE = 9
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def allow_foreground(pid: int) -> None:
+    """방금 실행한 게임이 스스로 창을 앞으로 올릴 수 있게 허락한다."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.AllowSetForegroundWindow(pid)
+    except Exception:
+        pass
 
 
 class GameLauncher(arcade.Window):
@@ -1975,6 +2002,7 @@ class GameLauncher(arcade.Window):
         command, cwd = self.commands[index]
         try:
             self.process = subprocess.Popen(command, cwd=cwd)
+            allow_foreground(self.process.pid)
         except OSError:
             self.notice = f"'{self.game_name(index)}'을(를) 실행하지 못했습니다. 진행 요원에게 알려 주세요."
             return
@@ -1995,8 +2023,10 @@ class GameLauncher(arcade.Window):
         # 닫힌 창에 남은 갱신 예약이 한 번 더 불릴 수 있다. 다시 닫으면 새로 연 런처 창까지 끊기므로 위에서 건너뛴다.
         self.loading_time += delta_time
         # 게임 창이 뜨거나, 게임이 바로 끝났거나, 너무 오래 걸리면 런처 창을 닫는다.
-        if (self.process.poll() is not None or self.loading_time >= LAUNCH_WAIT
-                or process_window_shown(self.process.pid)):
+        hwnd = find_process_window(self.process.pid)
+        if self.process.poll() is not None or self.loading_time >= LAUNCH_WAIT or hwnd:
+            # 런처가 앞에 있는 동안 게임 창을 앞으로 올려야 게임이 최소화되거나 뒤에 숨은 채 켜지지 않는다.
+            bring_to_front(hwnd)
             self.allow_close = True
             self.closing = True
             self.close()
