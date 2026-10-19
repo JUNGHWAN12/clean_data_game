@@ -11,6 +11,7 @@ import datetime
 import sys
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -112,6 +113,7 @@ LOCK_AFTER_SELECT = 0.4
 # 오늘의 랭킹: 등급이 먼저, 같은 등급이면 점수 순. 빠른 AI보다 믿을 수 있는 AI가 위에 온다.
 RANK_FILE = APP_DIR / "ranking.json"
 RANK_SIZE = 10
+RANK_RELOAD = 5.0       # 랭킹 파일을 다시 읽는 간격(초). 매 프레임 읽으면 기록이 쌓일수록 화면이 끊긴다.
 NAME_LENGTH = 3
 NAME_IDLE = 30.0       # 이니셜 입력을 방치하면 저장하지 않고 결과 화면으로 넘어간다
 # 랭킹판에 올릴 수 없는 이니셜. 입력한 영문 3글자와 정확히 같으면 저장하지 않는다.
@@ -464,6 +466,7 @@ class CleanDataGame(arcade.Window):
         self.action_lock = 0.0
         self.name_input = ""
         self.last_rank: Optional[int] = None
+        self.rank_cache: Optional[tuple] = None   # (날짜, 읽은 시각, 오늘의 TOP 10)
         self.privacy_leaks = 0
         self.copyright_issues = 0
         self.bias_issues = 0
@@ -549,9 +552,13 @@ class CleanDataGame(arcade.Window):
         return (GRADE_ORDER.index(entry["grade"]), -entry["score"])
 
     def today_ranking(self) -> list[dict]:
+        # 메뉴와 대기 화면은 매 프레임 랭킹판을 그리므로, 읽은 결과를 잠시 저장해 두고 다시 쓴다.
         today = datetime.date.today().isoformat()
-        entries = [e for e in self.load_ranking() if e.get("date") == today]
-        return sorted(entries, key=self.rank_key)[:RANK_SIZE]
+        now = time.monotonic()
+        if self.rank_cache is None or self.rank_cache[0] != today or now - self.rank_cache[1] >= RANK_RELOAD:
+            entries = [e for e in self.load_ranking() if e.get("date") == today]
+            self.rank_cache = (today, now, sorted(entries, key=self.rank_key)[:RANK_SIZE])
+        return self.rank_cache[2]
 
     def current_entry(self) -> dict:
         return {"date": datetime.date.today().isoformat(), "name": self.name_input,
@@ -563,6 +570,7 @@ class CleanDataGame(arcade.Window):
         self.cards = []
         self.selected = None
         self.last_rank = None
+        self.rank_cache = None   # TOP 10 진입 여부는 파일을 새로 읽어 판단한다.
         ranking = self.today_ranking()
         entry = self.current_entry()
         qualifies = len(ranking) < RANK_SIZE or self.rank_key(entry) < self.rank_key(ranking[-1])
@@ -623,6 +631,7 @@ class CleanDataGame(arcade.Window):
                 json.dump(entries, file, ensure_ascii=False, indent=1)
         except OSError:
             pass  # 저장하지 못해도 결과 화면은 보여준다.
+        self.rank_cache = None
         ranking = self.today_ranking()
         self.last_rank = next((i + 1 for i, e in enumerate(ranking) if e == entry), None)
         self.play("buy")
