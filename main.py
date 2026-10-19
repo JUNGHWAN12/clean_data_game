@@ -2003,6 +2003,48 @@ def run_launcher(booth: bool):
             notice = ""
 
 
+def run_check() -> int:
+    """설치 점검(--check): 창을 띄우지 않고 카드·글꼴·소리 파일과 booth.json의 게임 경로를 확인한다.
+
+    콘솔 없는 실행 파일에서도 결과를 볼 수 있도록 check.log에도 남긴다. 문제가 없으면 0, 있으면 1로 끝낸다.
+    """
+    lines, ok = [f"게임 폴더: {APP_DIR}"], True
+    try:
+        lines.append(f"card.json: 카드 {len(load_card_deck())}장")
+    except Exception as error:
+        ok = False
+        lines.append(f"card.json 오류: {error}")
+    missing = [name for name in FONT_FILES if not (FONT_DIR / name).is_file()]
+    missing += [f"{name}.wav" for name in SOUND_NAMES if not (SOUND_DIR / f"{name}.wav").is_file()]
+    if missing:
+        ok = False
+        lines.append("없는 파일: " + ", ".join(missing))
+    else:
+        lines.append(f"글꼴 {len(FONT_FILES)}개, 소리 {len(SOUND_NAMES)}개 확인")
+    if BOOTH_FILE.is_file():
+        config = load_booth_config()
+        games = config.get("games", [])
+        if not games:
+            ok = False
+            lines.append("booth.json: 게임 목록을 읽지 못했습니다")
+        lines.append(f"booth.json: PC 이름 '{config.get('pc_name', '')}', 게임 {len(games)}개")
+        for index, game in enumerate(games, start=1):
+            found = game_command(game)
+            if found is None:
+                ok = False
+            lines.append(f"  게임 {index} '{game.get('name', '')}': " + (f"{found[0][0]}" if found else "실행 파일을 찾을 수 없음"))
+    else:
+        lines.append("booth.json 없음: 런처 없이 이 게임만 실행합니다")
+    lines.append("설치 점검: 문제 없음" if ok else "설치 점검: 문제 있음")
+    text = "\n".join(lines)
+    print(text)
+    try:
+        (APP_DIR / "check.log").write_text(text + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return 0 if ok else 1
+
+
 def write_error_log():
     with (APP_DIR / "error.log").open("a", encoding="utf-8") as file:
         file.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{traceback.format_exc()}")
@@ -2011,6 +2053,8 @@ def write_error_log():
 def main():
     # 부스에서는 전체 화면으로 실행한다. 개발·점검 때는 --window 옵션으로 창 모드 실행.
     booth = "--window" not in sys.argv
+    if "--check" in sys.argv:
+        sys.exit(run_check())
     if "--launcher" in sys.argv:
         try:
             run_launcher(booth)

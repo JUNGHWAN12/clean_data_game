@@ -1,0 +1,90 @@
+# 부스 노트북용 Windows 실행 파일 묶음을 만든다: 런처(클린 데이터 라벨러) + 데이터 패킷 러너 + 패스워드 가디언.
+# 결과: 이 작업 페이지 아래 Artifacts의 'Booth-windows'
+#   압축을 풀면 Booth 폴더 → 노트북에 복사 → CleanDataLabeler\booth.json의 pc_name만 바꾸고 run_booth.bat 실행
+# 다른 두 게임은 각 저장소의 main(또는 수동 실행 때 고른 브랜치)을 받아 함께 빌드한다.
+name: 부스 실행 파일 만들기 (런처 + 세 게임)
+
+on:
+  workflow_dispatch:
+    inputs:
+      packet_runner_ref:
+        description: "데이터 패킷 러너 브랜치"
+        default: main
+      password_guardian_ref:
+        description: "패스워드 가디언 브랜치"
+        default: main
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: 클린 데이터 라벨러(런처) 받기
+        uses: actions/checkout@v4
+        with:
+          path: src/CleanDataLabeler
+
+      - name: 데이터 패킷 러너 받기
+        uses: actions/checkout@v4
+        with:
+          repository: JUNGHWAN12/data_packet-runner
+          ref: ${{ inputs.packet_runner_ref || 'main' }}
+          path: src/data_packet-runner
+
+      - name: 패스워드 가디언 받기
+        uses: actions/checkout@v4
+        with:
+          repository: JUNGHWAN12/password_guardian
+          ref: ${{ inputs.password_guardian_ref || 'main' }}
+          path: src/password_guardian
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 설치
+        run: >
+          python -m pip install pyinstaller==6.22.3
+          -r src/CleanDataLabeler/requirements.txt
+          -r src/data_packet-runner/requirements.txt
+          -r src/password_guardian/requirements.txt
+
+      - name: 클린 데이터 라벨러(런처) 빌드
+        run: python src/CleanDataLabeler/tools/build_exe.py
+
+      - name: 데이터 패킷 러너 빌드
+        working-directory: src/data_packet-runner
+        run: python -m PyInstaller --noconfirm --distpath ../../Booth --workpath ../../build/packet packaging/PacketRunner.spec
+
+      - name: 패스워드 가디언 빌드
+        working-directory: src/password_guardian
+        run: python -m PyInstaller --noconfirm --clean --distpath ../../Booth --workpath ../../build/guardian PasswordGuardian.spec
+
+      - name: Booth 폴더로 모으기
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse "src\CleanDataLabeler\dist\CleanDataLabeler" "Booth\CleanDataLabeler"
+          Copy-Item "Booth\CleanDataLabeler\booth.example.json" "Booth\CleanDataLabeler\booth.json"
+          Get-ChildItem Booth | Select-Object Name
+
+      - name: 설치 점검 (--check, 종료 코드 확인)
+        shell: pwsh
+        run: |
+          # 콘솔 없는 프로그램이라 Start-Process -Wait로 끝날 때까지 기다려 종료 코드를 받는다 (런처와 같은 방식)
+          $p = Start-Process -FilePath "Booth\CleanDataLabeler\CleanDataLabeler.exe" -ArgumentList "--check" -Wait -PassThru
+          Get-Content "Booth\CleanDataLabeler\check.log"
+          if ($p.ExitCode -ne 0) { throw "클린 데이터 라벨러 점검 실패: 종료 코드 $($p.ExitCode)" }
+          $p = Start-Process -FilePath "Booth\PacketRunner\PacketRunner.exe" -ArgumentList "--check" -Wait -PassThru
+          Get-Content "Booth\PacketRunner\logs\game.log"
+          if ($p.ExitCode -ne 0) { throw "데이터 패킷 러너 점검 실패: 종료 코드 $($p.ExitCode)" }
+          if (-not (Test-Path "Booth\PasswordGuardian\PasswordGuardian.exe")) { throw "PasswordGuardian.exe가 없습니다" }
+          # 점검하며 생긴 파일은 지워 깨끗한 상태로 올린다
+          Remove-Item -Force "Booth\CleanDataLabeler\check.log" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "Booth\PacketRunner\logs", "Booth\PacketRunner\data" -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Booth-windows
+          path: Booth
+          retention-days: 30

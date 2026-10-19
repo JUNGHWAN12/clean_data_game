@@ -70,6 +70,16 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 - 다른 두 게임의 런처용 실행 옵션: 데이터 패킷 러너 `--launcher`(한 판이 끝나거나 시작 화면에서 ESC, 또는 60초 동안 입력이 없으면 런처로), 패스워드 가디언 `--booth --fullscreen`(결과 화면이 끝나거나 시작 화면에서 ESC, 게임 중 Shift+ESC면 런처로).
 - 다른 게임 제작자에게 전달할 조건은 '부스 게임 런처 연동 안내' 문서에 정리되어 있습니다.
 
+### GitHub Actions로 부스 묶음 받기
+
+`main`에 올리거나 Actions 탭에서 **"부스 실행 파일 만들기 (런처 + 세 게임)"** 를 수동 실행하면, Windows에서 세 게임을 빌드해 `Booth` 폴더 하나로 묶어 줍니다.
+
+1. 저장소의 **Actions** 탭 → 실행된 작업 → 아래 **Artifacts**의 `Booth-windows`를 내려받습니다(30일 보관).
+2. 압축을 풀어 노트북에 복사하고, `Booth\CleanDataLabeler\booth.json`의 `pc_name`만 PC마다 바꿉니다.
+3. `Booth\CleanDataLabeler\run_booth.bat`을 실행합니다.
+
+다른 두 게임은 각 저장소의 `main`을 받아 빌드합니다. 수동 실행 때는 브랜치를 고를 수 있습니다. 빌드 중에는 `CleanDataLabeler.exe --check`, `PacketRunner.exe --check`로 파일과 게임 경로를 점검합니다(`--check`는 창 없이 확인하고 `check.log`에 결과를 남깁니다).
+
 ## 부스 현장 체크리스트
 
 행사 전날 또는 당일 시작 전에 부스 PC에서 확인합니다.

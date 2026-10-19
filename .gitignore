@@ -55,3 +55,5 @@ ranking.json
 error.log
 # 부스 PC별 설정(PC 이름, 런처 게임 목록). booth.example.json을 복사해 만든다.
 booth.json
+# 설치 점검 결과(--check)
+check.log
