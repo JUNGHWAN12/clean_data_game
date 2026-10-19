@@ -49,6 +49,26 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 - 새 PC에서 처음 실행할 때는 백신 검사 때문에 켜지는 데 1분 정도 걸릴 수 있습니다. 두 번째부터는 몇 초면 켜집니다.
 - 실행 파일 점검: `CleanDataLabeler.exe --window --smoke-test`는 창 모드로 3초 실행 후 스스로 종료합니다.
 
+## 부스 런처 (한 PC에서 세 게임)
+
+부스 노트북 4대는 각각 세 게임을 모두 돌립니다. 실행 파일 폴더에 `booth.json`이 있으면 `run_booth.bat`이 게임 1·2·3을 고르는 시작 화면(런처)을 띄웁니다. 고른 게임이 꺼지면 런처 화면으로 돌아옵니다.
+
+1. 세 게임 폴더를 나란히 둡니다: `Booth\CleanDataLabeler`, `Booth\Game2`, `Booth\Game3`
+2. `CleanDataLabeler` 폴더의 `booth.example.json`을 `booth.json`으로 복사하고, PC 이름과 다른 두 게임의 이름·설명·실행 파일 경로를 고칩니다. 경로는 `CleanDataLabeler` 폴더 기준이고 `"command": "self"`는 이 게임입니다.
+3. `run_booth.bat`을 실행합니다.
+
+| 화면 | 키 | 동작 |
+|---|---|---|
+| 런처 | `1` `2` `3` 또는 클릭 | 게임 실행 |
+| 런처 | `Ctrl` + `Shift` + `Q` | 부스 프로그램 전체 종료 |
+| 이 게임의 메뉴 | `ESC` | 런처로 돌아가기 |
+| 이 게임 어디서나 | `Ctrl` + `Shift` + `Q` | 런처로 돌아가기 |
+
+- 다른 게임이 0이 아닌 종료 코드로 끝나거나 실행 파일을 찾지 못하면 런처에 빨간 안내가 나오고, 다시 고를 수 있습니다.
+- `booth.json`의 `pc_name`(8글자 이내)은 이 게임의 랭킹판에 "PC 1 오늘의 TOP 10"처럼 표시됩니다. 랭킹은 PC마다 따로 저장됩니다.
+- `booth.json`이 없으면 지금처럼 이 게임만 실행됩니다.
+- 다른 게임 제작자에게 전달할 조건은 '부스 게임 런처 연동 안내' 문서에 정리되어 있습니다.
+
 ## 부스 현장 체크리스트
 
 행사 전날 또는 당일 시작 전에 부스 PC에서 확인합니다.

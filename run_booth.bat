@@ -4,16 +4,19 @@ rem - Runs the game in fullscreen booth mode.
 rem - If the game crashes (non-zero exit code), it restarts after 3 seconds.
 rem - If staff quits with Ctrl+Shift+Q (exit code 0), the launcher stops.
 rem - If card.json is broken (exit code 3), it shows a message instead of restarting.
+rem - If booth.json exists, it starts the game launcher (pick one of three booth games).
 chcp 65001 > nul
 cd /d "%~dp0"
+set "MODE="
+if exist "booth.json" set "MODE=--launcher"
 
 :loop
 if exist "CleanDataLabeler.exe" (
-    "CleanDataLabeler.exe"
+    "CleanDataLabeler.exe" %MODE%
 ) else if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" main.py
+    ".venv\Scripts\python.exe" main.py %MODE%
 ) else if exist "venv\Scripts\python.exe" (
-    "venv\Scripts\python.exe" main.py
+    "venv\Scripts\python.exe" main.py %MODE%
 ) else (
     echo 실행할 게임을 찾지 못했습니다. CleanDataLabeler.exe 또는 venv 폴더가 이 폴더에 있는지 확인하세요.
     pause

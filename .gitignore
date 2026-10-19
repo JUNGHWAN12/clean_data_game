@@ -53,3 +53,5 @@ captures/
 ranking.json
 # 게임 오류 기록
 error.log
+# 부스 PC별 설정(PC 이름, 런처 게임 목록). booth.example.json을 복사해 만든다.
+booth.json

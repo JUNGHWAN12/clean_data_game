@@ -11,6 +11,7 @@ import datetime
 import sys
 import json
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -341,6 +342,29 @@ class DataCard:
                 "bias": PURPLE, "mixed": ORANGE}[self.risk_key]
 
 
+# 부스 PC별 설정: PC 이름(랭킹판에 표시)과 런처에서 고를 게임 목록. 없으면 런처 없이 이 게임만 쓴다.
+BOOTH_FILE = APP_DIR / "booth.json"
+PC_NAME_LENGTH = 8
+LAUNCHER_GAMES = 3
+
+
+def load_booth_config() -> dict:
+    """booth.json을 읽는다. 없거나 형식이 틀리면 빈 설정을 돌려준다."""
+    try:
+        with BOOTH_FILE.open("r", encoding="utf-8-sig") as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    pc_name = data.get("pc_name")
+    games = data.get("games")
+    return {
+        "pc_name": pc_name.strip()[:PC_NAME_LENGTH] if isinstance(pc_name, str) else "",
+        "games": [g for g in games if isinstance(g, dict)][:LAUNCHER_GAMES] if isinstance(games, list) else [],
+    }
+
+
 CARD_FILE = APP_DIR / "card.json"
 CARD_ERROR_EXIT = 3   # card.json 형식 오류로 끝날 때의 종료 코드(run_booth.bat이 보고 다시 켜지 않는다)
 REQUIRED_CARD_FIELDS = {
@@ -404,7 +428,8 @@ def load_card_deck() -> list[DataCard]:
 
 
 class CleanDataGame(arcade.Window):
-    def __init__(self, card_deck: list[DataCard], fullscreen: bool = False, booth: bool = False):
+    def __init__(self, card_deck: list[DataCard], fullscreen: bool = False, booth: bool = False,
+                 from_launcher: bool = False):
         load_fonts()
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False, fullscreen=fullscreen)
         disable_ime(self)
@@ -412,6 +437,9 @@ class CleanDataGame(arcade.Window):
         self.card_deck = card_deck
         # 부스 모드에서는 Alt+F4나 창 닫기로 꺼지지 않고, 진행 요원 키(Ctrl+Shift+Q)로만 종료한다.
         self.booth = booth
+        # 런처에서 실행하면 메뉴의 ESC로 게임 선택 화면(런처)에 돌아간다.
+        self.from_launcher = from_launcher
+        self.pc_name = load_booth_config().get("pc_name", "")
         self.allow_close = not booth
         self.idle_paused = False
         self.name_warning = ""
@@ -944,6 +972,8 @@ class CleanDataGame(arcade.Window):
             elif key == arcade.key.T:
                 self.game_screen = "tutorial"
                 self.tutorial_page = 0
+            elif key == arcade.key.ESCAPE and self.from_launcher:
+                self.staff_quit()   # 정상 종료(0)하면 런처가 게임 선택 화면을 다시 띄운다.
             return
         if self.game_screen == "tutorial":
             if key == arcade.key.ESCAPE:
@@ -1209,13 +1239,16 @@ class CleanDataGame(arcade.Window):
         label("T  게임 소개 · 튜토리얼", UI_WIDTH / 2, 225, 18, MUTED, "center", "center")
         label(f"{self.round_label()} 동안 승인 · 정제 · 제외로 데이터를 지켜주세요", UI_WIDTH / 2, 146, 15,
               YELLOW if self.round_length != ROUND_TIME else MUTED, "center")
-        label("SPACE / ENTER로 시작", UI_WIDTH / 2, 112, 13, (91, 120, 158), "center")
+        start_hint = "SPACE / ENTER로 시작  ·  ESC 게임 선택 화면으로" if self.from_launcher else "SPACE / ENTER로 시작"
+        label(start_hint, UI_WIDTH / 2, 112, 13, (91, 120, 158), "center")
         self.draw_ranking_board(972, 150, 1250, 560)
 
     def draw_ranking_board(self, left, bottom, right, top):
         rect(left, bottom, right, top, (16, 28, 46))
         outline(left, bottom, right, top, (46, 78, 104), 1)
-        label("오늘의 TOP 10", left + 16, top - 30, 15, YELLOW, bold=True)
+        # PC마다 랭킹이 따로 저장되므로, booth.json에 PC 이름이 있으면 함께 보여준다.
+        title = f"{self.pc_name} 오늘의 TOP 10" if self.pc_name else "오늘의 TOP 10"
+        label(title, left + 16, top - 30, 15, YELLOW, bold=True)
         label("등급·점수 순", right - 14, top - 30, 10, MUTED, "right")
         ranking = self.today_ranking()
         if not ranking:
@@ -1800,6 +1833,155 @@ class CleanDataGame(arcade.Window):
         rect(x, y, x + 190 * value / 100, y + 8, color)
 
 
+def game_command(game: dict) -> Optional[tuple[list[str], Path]]:
+    """booth.json의 게임 한 개를 실행할 명령과 작업 폴더. 실행 파일이 없으면 None."""
+    args = game.get("args", [])
+    args = [str(a) for a in args] if isinstance(args, list) else []
+    command = game.get("command")
+    if command == "self":
+        # 이 게임: 실행 파일이면 exe를, 파이썬이면 main.py를 다시 실행한다.
+        base = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
+        extra = ["--window"] if "--window" in sys.argv else []
+        return base + ["--from-launcher", *extra, *args], APP_DIR
+    if not isinstance(command, str) or not command.strip():
+        return None
+    path = (APP_DIR / command).resolve()
+    if not path.is_file():
+        return None
+    return [str(path), *args], path.parent
+
+
+class GameLauncher(arcade.Window):
+    """부스 시작 화면: 한 PC에서 세 게임을 고른다. 고른 게임이 끝나면 다시 이 화면을 띄운다."""
+
+    def __init__(self, games: list[dict], pc_name: str, notice: str = "",
+                 fullscreen: bool = False, booth: bool = False):
+        # 앞서 연 런처 창의 글자 객체는 닫힌 창에 묶여 있으므로 새로 만든다.
+        _TEXT_CACHE.clear()
+        load_fonts()
+        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False, fullscreen=fullscreen)
+        disable_ime(self)
+        arcade.set_background_color(BG)
+        self.camera = Camera2D(viewport=LBWH(0, 0, self.width, self.height),
+                               projection=LRBT(0, UI_WIDTH, 0, UI_HEIGHT), position=(0, 0), window=self)
+        self.games = games
+        self.commands = [game_command(g) for g in games]
+        self.pc_name = pc_name
+        self.notice = notice
+        self.allow_close = not booth
+        self.choice: Optional[int] = None
+        self.quit_all = False
+
+    def on_resize(self, width: int, height: int):
+        super().on_resize(width, height)
+        # 창을 다시 만들 때는 카메라를 만들기 전에 크기 변경 알림이 먼저 올 수 있다.
+        if getattr(self, "camera", None) is not None:
+            self.camera.viewport = LBWH(0, 0, width, height)
+
+    def on_close(self):
+        if self.allow_close:
+            self.quit_all = True
+            super().on_close()
+
+    @staticmethod
+    def slot(index: int):
+        """게임 카드 위치: (왼쪽, 아래, 오른쪽, 위)."""
+        left = 90 + index * 380
+        return left, 230, left + 340, 590
+
+    def pick(self, index: int):
+        if index >= len(self.games):
+            return
+        if self.commands[index] is None:
+            self.notice = f"'{self.game_name(index)}' 실행 파일을 찾을 수 없습니다. booth.json의 경로를 확인하세요."
+            return
+        self.choice = index
+        self.allow_close = True
+        self.close()
+
+    def game_name(self, index: int) -> str:
+        name = self.games[index].get("name")
+        return str(name)[:12] if name else f"게임 {index + 1}"
+
+    def on_key_press(self, key, modifiers):
+        if key == arcade.key.Q and modifiers & arcade.key.MOD_CTRL and modifiers & arcade.key.MOD_SHIFT:
+            # 진행 요원: 런처까지 끄면 부스 프로그램이 완전히 끝난다.
+            self.quit_all = True
+            self.allow_close = True
+            self.close()
+            return
+        if key == arcade.key.F11:
+            self.set_fullscreen(not self.fullscreen)
+            self.camera.viewport = LBWH(0, 0, self.width, self.height)
+            return
+        keys = {arcade.key.KEY_1: 0, arcade.key.KEY_2: 1, arcade.key.KEY_3: 2,
+                arcade.key.NUM_1: 0, arcade.key.NUM_2: 1, arcade.key.NUM_3: 2}
+        if key in keys:
+            self.pick(keys[key])
+
+    def on_mouse_press(self, x, y, button, modifiers):
+        x, y, _ = self.camera.unproject((x, y))
+        for index in range(len(self.games)):
+            left, bottom, right, top = self.slot(index)
+            if left <= x <= right and bottom <= y <= top:
+                self.pick(index)
+                return
+
+    def on_draw(self):
+        self.clear()
+        self.camera.use()
+        label("AI 윤리 체험 부스", UI_WIDTH / 2, 700, 34, WHITE, "center", "center", True)
+        label("체험할 게임을 고르세요. 세 게임을 모두 해 보면 좋아요!", UI_WIDTH / 2, 650, 17, MUTED, "center", "center")
+        colors = (CYAN, YELLOW, PURPLE)
+        for index in range(len(self.games)):
+            left, bottom, right, top = self.slot(index)
+            ready = self.commands[index] is not None
+            color = colors[index] if ready else MUTED
+            rect(left, bottom, right, top, PANEL)
+            outline(left, bottom, right, top, color, 3 if ready else 1)
+            arcade.draw_circle_filled((left + right) / 2, top - 70, 38, color)
+            label(str(index + 1), (left + right) / 2, top - 70, 34, BG, "center", "center", True)
+            label(self.game_name(index), (left + right) / 2, top - 150, 24, WHITE if ready else MUTED,
+                  "center", "center", True)
+            description = str(self.games[index].get("description", ""))[:40]
+            for line_no, line in enumerate(wrapped(description, 16)[:3]):
+                label(line, (left + right) / 2, top - 200 - line_no * 26, 15, MUTED, "center", "center")
+            footer = f"숫자 {index + 1} 또는 클릭" if ready else "실행 파일 없음"
+            label(footer, (left + right) / 2, bottom + 30, 14, color, "center", "center", True)
+        if not self.games:
+            label("booth.json에 게임 목록이 없습니다.", UI_WIDTH / 2, 420, 20, YELLOW, "center", "center")
+        if self.notice:
+            label(self.notice, UI_WIDTH / 2, 170, 15, RED, "center", "center")
+        if self.pc_name:
+            label(self.pc_name, UI_WIDTH - 40, 40, 14, MUTED, "right", "center", True)
+
+
+def run_launcher(booth: bool):
+    """런처 화면 → 고른 게임 실행(끝날 때까지 기다림) → 런처 화면을 반복한다."""
+    notice = ""
+    while True:
+        config = load_booth_config()   # 매번 읽어, booth.json을 고치면 다음 선택부터 반영한다.
+        games = config.get("games", [])
+        launcher = GameLauncher(games, config.get("pc_name", ""), notice, fullscreen=booth, booth=booth)
+        arcade.run()
+        if launcher.quit_all or launcher.choice is None:
+            return
+        name = launcher.game_name(launcher.choice)
+        command, cwd = launcher.commands[launcher.choice]
+        try:
+            code = subprocess.run(command, cwd=cwd).returncode
+        except OSError:
+            code = None
+        if code is None:
+            notice = f"'{name}'을(를) 실행하지 못했습니다. 진행 요원에게 알려 주세요."
+        elif code == CARD_ERROR_EXIT and games[launcher.choice].get("command") == "self":
+            notice = f"'{name}'의 card.json 형식이 올바르지 않습니다. error.log를 확인하세요."
+        elif code != 0:
+            notice = f"'{name}'이(가) 비정상 종료되었습니다(코드 {code}). 다시 고를 수 있습니다."
+        else:
+            notice = ""
+
+
 def write_error_log():
     with (APP_DIR / "error.log").open("a", encoding="utf-8") as file:
         file.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n{traceback.format_exc()}")
@@ -1808,6 +1990,13 @@ def write_error_log():
 def main():
     # 부스에서는 전체 화면으로 실행한다. 개발·점검 때는 --window 옵션으로 창 모드 실행.
     booth = "--window" not in sys.argv
+    if "--launcher" in sys.argv:
+        try:
+            run_launcher(booth)
+        except Exception:
+            write_error_log()
+            sys.exit(1)
+        sys.exit(0)
     try:
         card_deck = load_card_deck()
     except Exception:
@@ -1815,7 +2004,7 @@ def main():
         write_error_log()
         sys.exit(CARD_ERROR_EXIT)
     try:
-        game = CleanDataGame(card_deck, fullscreen=booth, booth=booth)
+        game = CleanDataGame(card_deck, fullscreen=booth, booth=booth, from_launcher="--from-launcher" in sys.argv)
         if "--smoke-test" in sys.argv:
             # 실행 파일 점검용: 3초 뒤 스스로 정상 종료한다.
             arcade.schedule_once(lambda _dt: game.staff_quit(), 3.0)

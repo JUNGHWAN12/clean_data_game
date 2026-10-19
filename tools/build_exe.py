@@ -45,6 +45,8 @@ def main():
     shutil.copy2(ROOT / "card.json", OUT_DIR / "card.json")
     shutil.copy2(ROOT / "run_booth.bat", OUT_DIR / "run_booth.bat")
     shutil.copytree(ROOT / "assets", OUT_DIR / "assets", dirs_exist_ok=True)
+    # 런처 설정 예시. 부스 PC마다 booth.json으로 복사해 PC 이름과 게임 경로를 고친다.
+    shutil.copy2(ROOT / "booth.example.json", OUT_DIR / "booth.example.json")
     print(f"\n완료: {OUT_DIR}")
     print("이 폴더를 통째로 부스 PC에 복사한 뒤 run_booth.bat을 실행하세요.")
 
