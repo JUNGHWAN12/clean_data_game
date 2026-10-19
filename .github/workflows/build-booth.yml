@@ -19,6 +19,10 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # Windows 빌드 서버의 기본 출력 인코딩(cp1252)은 한글을 못 쓴다. 빌드 스크립트의 한국어 안내가 실패하지 않게 한다.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     steps:
       - name: 클린 데이터 라벨러(런처) 받기
         uses: actions/checkout@v4
