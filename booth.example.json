@@ -3,8 +3,8 @@
   "games": [
     {"name": "클린 데이터 라벨러", "description": "AI가 배울 데이터를 직접 검수해 봅니다", "command": "self"},
     {"name": "데이터 패킷 러너", "description": "장애물을 넘어 데이터를 서버까지 전달하세요",
-     "command": "python", "args": ["main.py", "--booth"], "cwd": "../data_packet-runner"},
+     "command": "../PacketRunner/PacketRunner.exe", "args": ["--launcher"]},
     {"name": "패스워드 가디언", "description": "보안 선택으로 금고를 지키는 슈팅 게임",
-     "command": "python", "args": ["run_game.py", "--fullscreen"], "cwd": "../password_guardian"}
+     "command": "../PasswordGuardian/PasswordGuardian.exe", "args": ["--booth", "--fullscreen"]}
   ]
 }

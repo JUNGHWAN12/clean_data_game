@@ -53,7 +53,7 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 
 부스 노트북 4대는 각각 세 게임을 모두 돌립니다. 실행 파일 폴더에 `booth.json`이 있으면 `run_booth.bat`이 게임 1·2·3을 고르는 시작 화면(런처)을 띄웁니다. 고른 게임이 꺼지면 런처 화면으로 돌아옵니다.
 
-1. 세 게임 폴더를 나란히 둡니다: `Booth\CleanDataLabeler`, `Booth\data_packet-runner`, `Booth\password_guardian`
+1. 세 게임의 실행 파일 폴더를 나란히 둡니다: `Booth\CleanDataLabeler`, `Booth\PacketRunner`, `Booth\PasswordGuardian`
 2. `CleanDataLabeler` 폴더의 `booth.example.json`을 `booth.json`으로 복사하고, PC 이름과 다른 두 게임의 이름·설명·실행 파일 경로를 고칩니다. 경로는 `CleanDataLabeler` 폴더 기준이고 `"command": "self"`는 이 게임입니다. Python으로 실행하는 게임은 `"command": "python"`(PC에 설치된 Python, 또는 가상환경의 `python.exe` 경로), `"args"`에 실행할 파일, `"cwd"`에 게임 폴더를 적습니다.
 3. `run_booth.bat`을 실행합니다.
 
@@ -67,6 +67,7 @@ uv pip install --python venv\Scripts\python.exe -r requirements-build.txt
 - 다른 게임이 0이 아닌 종료 코드로 끝나거나 실행 파일을 찾지 못하면 런처에 빨간 안내가 나오고, 다시 고를 수 있습니다.
 - `booth.json`의 `pc_name`(8글자 이내)은 이 게임의 랭킹판에 "PC 1 오늘의 TOP 10"처럼 표시됩니다. 랭킹은 PC마다 따로 저장됩니다.
 - `booth.json`이 없으면 지금처럼 이 게임만 실행됩니다.
+- 다른 두 게임의 런처용 실행 옵션: 데이터 패킷 러너 `--launcher`(한 판이 끝나거나 시작 화면에서 ESC, 또는 60초 동안 입력이 없으면 런처로), 패스워드 가디언 `--booth --fullscreen`(결과 화면이 끝나거나 시작 화면에서 ESC, 게임 중 Shift+ESC면 런처로).
 - 다른 게임 제작자에게 전달할 조건은 '부스 게임 런처 연동 안내' 문서에 정리되어 있습니다.
 
 ## 부스 현장 체크리스트
