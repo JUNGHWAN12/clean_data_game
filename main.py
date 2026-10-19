@@ -1872,7 +1872,7 @@ def game_command(game: dict) -> Optional[tuple[list[str], Path]]:
     return [str(path), *args], folder
 
 
-LAUNCH_WAIT = 30.0   # 게임 창이 뜨기를 기다리는 최대 시간(초). 넘으면 런처 창을 닫고 게임이 끝나기를 기다린다.
+LAUNCH_WAIT = 30.0   # 게임 창이 뜨기를 기다리는 최대 시간(초). 넘으면 "진행 중" 화면으로 바꾸고 게임이 끝나기를 기다린다.
 
 
 def find_process_window(pid: int):
@@ -1900,12 +1900,11 @@ def find_process_window(pid: int):
         return True   # 확인하지 못하면 기다리지 않고 지금처럼 런처를 닫는다.
 
 
-def restore_to_front(window: arcade.Window):
-    """Windows에서 창이 최소화되어 있으면 원래 크기로 돌리고 맨 앞으로 가져온다.
+def restore_to_front(window: arcade.Window, force: bool = False):
+    """Windows에서 창을 맨 앞으로 가져온다. 최소화되어 있으면 원래 크기로 돌린다.
 
-    배치 파일의 검은 창처럼 다른 창이 앞에 있을 때 새로 뜬 전체 화면 창이 앞으로 오지 못하고
-    작업 표시줄로 내려가는 일이 있다(Windows 포그라운드 잠금). Alt 키를 한 번 눌렀다 떼면
-    Windows가 이 창을 앞으로 가져오도록 허락한다.
+    force가 아니면 최소화되어 있을 때만 한다. Windows는 뒤에 있던 프로그램이 스스로 앞으로 나오는 것을
+    막는데(포그라운드 잠금), Alt 키를 한 번 눌렀다 떼면 이 창을 앞으로 가져오도록 허락한다.
     """
     if sys.platform != "win32":
         return
@@ -1913,9 +1912,13 @@ def restore_to_front(window: arcade.Window):
         import ctypes
         user32 = ctypes.windll.user32
         hwnd = getattr(window, "_hwnd", None)
-        if not hwnd or not user32.IsIconic(hwnd):
+        if not hwnd:
             return
-        user32.ShowWindow(hwnd, 9)                 # SW_RESTORE
+        iconic = user32.IsIconic(hwnd)
+        if not iconic and not force:
+            return
+        if iconic:
+            user32.ShowWindow(hwnd, 9)             # SW_RESTORE
         user32.keybd_event(0x12, 0, 0, 0)          # Alt 누르기
         user32.SetForegroundWindow(hwnd)
         user32.keybd_event(0x12, 0, 2, 0)          # Alt 떼기 (KEYEVENTF_KEYUP)
@@ -1950,42 +1953,58 @@ def allow_foreground(pid: int) -> None:
         pass
 
 
-class GameLauncher(arcade.Window):
-    """부스 시작 화면: 한 PC에서 세 게임을 고른다. 고른 게임이 끝나면 다시 이 화면을 띄운다."""
+LAUNCHER_FPS = 60
+LAUNCHER_IDLE_FPS = 4   # 게임이 실행되는 동안 뒤에 있는 런처는 느리게 그려 게임 성능을 뺏지 않는다
 
-    def __init__(self, games: list[dict], pc_name: str, notice: str = "",
-                 fullscreen: bool = False, booth: bool = False):
-        # 앞서 연 런처 창의 글자 객체는 닫힌 창에 묶여 있으므로 새로 만든다.
-        _TEXT_CACHE.clear()
+
+class GameLauncher(arcade.Window):
+    """부스 시작 화면: 한 PC에서 세 게임을 고른다.
+
+    런처 창은 처음 한 번만 만들고, 게임이 실행되는 동안에도 닫지 않고 게임 뒤에 둔다.
+    게임이 꺼지면 Windows가 바로 뒤에 있던 런처 창을 앞으로 가져오므로 최소화된 채 남지 않는다.
+    (창을 닫았다가 새로 만들면, 게임이 꺼진 직후 새 창은 앞으로 나오지 못해 작업 표시줄로 내려갔다.)
+    """
+
+    def __init__(self, fullscreen: bool = False, booth: bool = False):
         load_fonts()
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE, resizable=False, fullscreen=fullscreen)
         disable_ime(self)
         arcade.set_background_color(BG)
         self.camera = Camera2D(viewport=LBWH(0, 0, self.width, self.height),
                                projection=LRBT(0, UI_WIDTH, 0, UI_HEIGHT), position=(0, 0), window=self)
-        self.games = games
-        self.commands = [game_command(g) for g in games]
-        self.pc_name = pc_name
-        self.notice = notice
         self.allow_close = not booth
+        self.notice = ""
+        self.reload_config()
         self.choice: Optional[int] = None
-        self.quit_all = False
-        # 고른 게임을 실행한 프로세스. 게임 창이 뜰 때까지 '불러오는 중' 화면을 보여 바탕화면이 비지 않게 한다.
+        # 실행 중인 게임. 게임 창이 뜰 때까지 '불러오는 중', 뜬 뒤에는 '게임 진행 중'을 보여 준다.
         self.process: Optional[subprocess.Popen] = None
+        self.game_shown = False
         self.loading_time = 0.0
-        self.closing = False   # 창을 닫은 뒤 같은 프레임의 그리기가 닫힌 창에 그리지 않게 한다.
+        self.closing = False    # 창을 닫은 뒤 같은 프레임의 그리기가 닫힌 창에 그리지 않게 한다.
         self.front_timer = 0.5  # 처음 갱신 때 바로 최소화 여부를 확인한다
+
+    def reload_config(self):
+        """booth.json을 다시 읽는다. 게임이 끝날 때마다 읽어, 고친 설정이 다음 선택부터 반영된다."""
+        config = load_booth_config()
+        self.games = config.get("games", [])
+        self.commands = [game_command(g) for g in self.games]
+        self.pc_name = config.get("pc_name", "")
 
     def on_resize(self, width: int, height: int):
         super().on_resize(width, height)
-        # 창을 다시 만들 때는 카메라를 만들기 전에 크기 변경 알림이 먼저 올 수 있다.
         if getattr(self, "camera", None) is not None:
             self.camera.viewport = LBWH(0, 0, width, height)
 
     def on_close(self):
-        if self.allow_close:
-            self.quit_all = True
+        if self.allow_close and self.process is None:
+            self.closing = True
             super().on_close()
+
+    def quit(self):
+        """진행 요원: 런처까지 끄면 부스 프로그램이 완전히 끝난다."""
+        self.allow_close = True
+        self.closing = True
+        self.close()
 
     @staticmethod
     def slot(index: int):
@@ -2009,6 +2028,7 @@ class GameLauncher(arcade.Window):
         self.choice = index
         self.notice = ""
         self.loading_time = 0.0
+        self.game_shown = False
 
     def on_update(self, delta_time: float):
         if self.closing:
@@ -2020,29 +2040,45 @@ class GameLauncher(arcade.Window):
                 self.front_timer = 0.0
                 restore_to_front(self)
             return
-        # 닫힌 창에 남은 갱신 예약이 한 번 더 불릴 수 있다. 다시 닫으면 새로 연 런처 창까지 끊기므로 위에서 건너뛴다.
         self.loading_time += delta_time
-        # 게임 창이 뜨거나, 게임이 바로 끝났거나, 너무 오래 걸리면 런처 창을 닫는다.
-        hwnd = find_process_window(self.process.pid)
-        if self.process.poll() is not None or self.loading_time >= LAUNCH_WAIT or hwnd:
-            # 런처가 앞에 있는 동안 게임 창을 앞으로 올려야 게임이 최소화되거나 뒤에 숨은 채 켜지지 않는다.
-            bring_to_front(hwnd)
-            self.allow_close = True
-            self.closing = True
-            self.close()
+        code = self.process.poll()
+        if code is not None:
+            self.game_finished(code)
+            return
+        if not self.game_shown:
+            hwnd = find_process_window(self.process.pid)
+            if hwnd or self.loading_time >= LAUNCH_WAIT:
+                # 런처가 앞에 있는 동안 게임 창을 앞으로 올려야 게임이 최소화되거나 뒤에 숨은 채 켜지지 않는다.
+                bring_to_front(hwnd)
+                self.game_shown = True
+                self.set_draw_rate(1 / LAUNCHER_IDLE_FPS)    # 느리게 할 때는 그리기부터
+                self.set_update_rate(1 / LAUNCHER_IDLE_FPS)
+
+    def game_finished(self, code: int):
+        name = self.game_name(self.choice)
+        if code == CARD_ERROR_EXIT and self.games[self.choice].get("command") == "self":
+            self.notice = f"'{name}'의 card.json 형식이 올바르지 않습니다. error.log를 확인하세요."
+        elif code != 0:
+            self.notice = f"'{name}'이(가) 비정상 종료되었습니다(코드 {code}). 다시 고를 수 있습니다."
+        else:
+            self.notice = ""
+        self.process = None
+        self.game_shown = False
+        self.reload_config()
+        # arcade는 그리기 간격이 갱신 간격보다 짧으면 안 되므로, 빠르게 되돌릴 때는 갱신부터 바꾼다.
+        self.set_update_rate(1 / LAUNCHER_FPS)
+        self.set_draw_rate(1 / LAUNCHER_FPS)
+        restore_to_front(self, force=True)
 
     def game_name(self, index: int) -> str:
-        name = self.games[index].get("name")
-        return str(name)[:12] if name else f"게임 {index + 1}"
+        name = self.games[index].get("name") if index is not None and index < len(self.games) else None
+        return str(name)[:12] if name else f"게임 {(index or 0) + 1}"
 
     def on_key_press(self, key, modifiers):
         if self.process is not None:
-            return   # 게임을 불러오는 동안에는 키를 받지 않는다.
+            return   # 게임을 불러오거나 진행하는 동안에는 키를 받지 않는다(Alt+Tab으로 와도 게임이 두 번 켜지지 않게).
         if key == arcade.key.Q and modifiers & arcade.key.MOD_CTRL and modifiers & arcade.key.MOD_SHIFT:
-            # 진행 요원: 런처까지 끄면 부스 프로그램이 완전히 끝난다.
-            self.quit_all = True
-            self.allow_close = True
-            self.close()
+            self.quit()
             return
         if key == arcade.key.F11:
             self.set_fullscreen(not self.fullscreen)
@@ -2068,6 +2104,11 @@ class GameLauncher(arcade.Window):
             return
         self.clear()
         self.camera.use()
+        if self.process is not None and self.game_shown:
+            # 게임 뒤에 있는 동안: 가볍게 한 줄만 그린다(Alt+Tab으로 왔을 때 안내).
+            label(f"'{self.game_name(self.choice)}' 진행 중입니다", UI_WIDTH / 2, 430, 26, WHITE, "center", "center", True)
+            label("게임을 끝내면 이 화면으로 돌아옵니다.", UI_WIDTH / 2, 380, 16, MUTED, "center", "center")
+            return
         label("AI 윤리 체험 부스", UI_WIDTH / 2, 700, 34, WHITE, "center", "center", True)
         label("체험할 게임을 고르세요. 세 게임을 모두 해 보면 좋아요!", UI_WIDTH / 2, 650, 17, MUTED, "center", "center")
         colors = (CYAN, YELLOW, PURPLE)
@@ -2102,23 +2143,9 @@ class GameLauncher(arcade.Window):
 
 
 def run_launcher(booth: bool):
-    """런처 화면 → 고른 게임 실행(끝날 때까지 기다림) → 런처 화면을 반복한다."""
-    notice = ""
-    while True:
-        config = load_booth_config()   # 매번 읽어, booth.json을 고치면 다음 선택부터 반영한다.
-        games = config.get("games", [])
-        launcher = GameLauncher(games, config.get("pc_name", ""), notice, fullscreen=booth, booth=booth)
-        arcade.run()
-        if launcher.process is None:
-            return   # 진행 요원이 런처를 끔(Ctrl+Shift+Q)
-        name = launcher.game_name(launcher.choice)
-        code = launcher.process.wait()   # 게임이 끝날 때까지 기다린다.
-        if code == CARD_ERROR_EXIT and games[launcher.choice].get("command") == "self":
-            notice = f"'{name}'의 card.json 형식이 올바르지 않습니다. error.log를 확인하세요."
-        elif code != 0:
-            notice = f"'{name}'이(가) 비정상 종료되었습니다(코드 {code}). 다시 고를 수 있습니다."
-        else:
-            notice = ""
+    """런처 창 하나로 게임 선택 → 실행 → 끝나면 다시 선택을 반복한다. 진행 요원이 끄면 끝난다."""
+    GameLauncher(fullscreen=booth, booth=booth)
+    arcade.run()
 
 
 def run_check() -> int:
