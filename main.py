@@ -120,23 +120,31 @@ RANK_RELOAD = 5.0       # 랭킹 파일을 다시 읽는 간격(초). 매 프레
 NAME_LENGTH = 3
 NAME_IDLE = 30.0       # 이니셜 입력을 방치하면 저장하지 않고 결과 화면으로 넘어간다
 # 랭킹판에 올릴 수 없는 이니셜. 입력한 영문 3글자와 정확히 같으면 저장하지 않는다.
+# 부스의 세 게임(클린 데이터 라벨러, 데이터 패킷 러너 등)이 같은 목록을 쓴다.
 BLOCKED_NAMES = {
     # 영어 욕설·비속어
     "FUK", "FUC", "FCK", "FKU", "FKN", "FUQ", "FUX", "WTF", "STF", "GTF", "FFS", "FML", "MFR",
     "SHT", "BCH", "ASS", "AZZ", "SOB",
+    "FUU", "CNT", "DMN", "PIS", "POS", "SUX",
     # 성적 표현
     "SEX", "SXY", "XXX", "CUM", "TIT", "PNS", "VAG", "DIK", "DIC", "COK", "COC", "SUK",
     "DCK", "JIZ", "ANL", "FAP", "DTF", "SLT", "PRN", "POR", "NUD", "HOE", "PUS",
+    "SXE", "KUM", "TTS",
     # 혐오·차별 표현
     "FAG", "NIG", "NGR", "NGA", "KKK", "NZI", "NAZ", "JAP", "CNK", "GOK", "RTD", "HTL", "GAY", "LES",
+    "FGT", "WHR",
     # 자해·폭력
     "KYS", "KMS", "DIE", "KIL",
+    # 화장실 말
+    "PEE", "POO",
     # 한국어 욕설의 로마자 약어
     "SIB", "SIP", "SBL", "SSB", "CBL", "GSK", "GSE", "BYS", "BSN", "MCN", "JNA", "JOT", "JOS",
     "JRL", "YMB", "NGM", "NOM", "YMN", "JMT", "ILB",
+    "SSI", "MCS", "NGB", "DRI", "EMI",
     # 한글 자판 위치로 친 욕설: 한글 자판대로 '시발'을 치면 영문 TLQKF가 입력되어 앞 3글자 TLQ가 된다.
     "TLQ", "QUD", "WHS", "WHW", "RJW", "EKR", "TPR", "QHW", "WKW",
     "ROT", "TOR", "ALC", "WLF", "DOA", "WHF", "SUS", "QUS", "DUT", "QKQ",
+    "WJW", "HHH", "EHD",
 }
 GRADE_ORDER = "SABCD"
 GRADE_COLORS = {"S": GREEN, "A": CYAN, "B": YELLOW, "C": ORANGE, "D": RED}
