@@ -66,7 +66,14 @@ jobs:
         run: python -m PyInstaller --noconfirm --clean --distpath ../../Booth --workpath ../../build/guardian PasswordGuardian.spec
 
       - name: 부스 시작 파일(START_BOOTH.exe) 빌드
-        run: python -m PyInstaller --noconfirm --onefile --windowed --name START_BOOTH --distpath build/start --workpath build/start-work --specpath build/start src/CleanDataLabeler/tools/booth_start.py
+        # Windows 기본 .NET Framework 컴파일러로 만든다. PyInstaller 한 파일 방식은 백신이 실행 파일을 잠그면
+        # "Failed to extract ...: failed to open archive file!"로 켜지지 않았다.
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build\start | Out-Null
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /codepage:65001 /out:build\start\START_BOOTH.exe src\CleanDataLabeler\tools\booth_start.cs
+          if ($LASTEXITCODE -ne 0) { throw "START_BOOTH.exe를 만들지 못했습니다" }
+          Get-Item build\start\START_BOOTH.exe | Select-Object Name, Length
 
       - name: Booth 폴더로 모으기
         shell: pwsh
@@ -90,6 +97,10 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "데이터 패킷 러너 점검 실패: 종료 코드 $($p.ExitCode)" }
           if (-not (Test-Path "Booth\PasswordGuardian\PasswordGuardian.exe")) { throw "PasswordGuardian.exe가 없습니다" }
           if (-not (Test-Path "Booth\START_BOOTH.exe")) { throw "START_BOOTH.exe가 없습니다" }
+          # 부스 시작 파일이 실제로 켜지고 게임을 찾는지: START_BOOTH.exe --check → CleanDataLabeler.exe --check
+          $p = Start-Process -FilePath "Booth\START_BOOTH.exe" -ArgumentList "--check" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "START_BOOTH.exe 점검 실패: 종료 코드 $($p.ExitCode)" }
+          Write-Host "START_BOOTH.exe 점검: 문제 없음"
           # 점검하며 생긴 파일은 지워 깨끗한 상태로 올린다
           Remove-Item -Force "Booth\CleanDataLabeler\check.log" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "Booth\PacketRunner\logs", "Booth\PacketRunner\data" -ErrorAction SilentlyContinue
