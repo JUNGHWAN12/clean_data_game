@@ -91,7 +91,7 @@ GAME_IDLE = 45.0       # 게임 중 이 시간 동안 입력이 없으면 자리
 # 3분 라운드 단계(기획서 6.2): (시작 초, 이름, 안내, 등장 난이도 상한, 자주 나오는 위험 유형)
 PHASES = [
     (0, "적응 단계", "위험 신호가 자동으로 보입니다", 1, None),
-    (25, "기본 검수", "저작권·개인정보 카드가 늘어납니다", 2, ("copyright", "privacy")),
+    (40, "기본 검수", "저작권·개인정보 카드가 늘어납니다", 2, ("copyright", "privacy")),
     (60, "혼합 데이터", "한 카드에 여러 문제가 섞여 나옵니다", 3, ("mixed",)),
     (100, "편향 관리", "편향된 문장과 잘못된 라벨을 찾아보세요", 3, ("bias",)),
     (140, "고속 처리", "카드가 더 빨리 들어옵니다", 3, None),
@@ -147,10 +147,20 @@ BLOCKED_NAMES = {
     "WJW", "HHH", "EHD",
 }
 GRADE_ORDER = "SABCD"
+# 세 가지 처리의 쉬운 기준. 튜토리얼과 직전 카드 해설에서 같은 말로 보여준다.
+ACTION_RULES = {
+    "approve": "1 승인 = 그대로 AI에게 가르쳐도 안전한 데이터",
+    "refine": "2 정제 = 가리거나 고치면 쓸 수 있는 데이터",
+    "remove": "3 제외 = 고쳐도 쓰면 안 되는 데이터",
+}
 GRADE_COLORS = {"S": GREEN, "A": CYAN, "B": YELLOW, "C": ORANGE, "D": RED}
-GOOD_METRIC = 70       # 결과 화면 AI 결과물이 '안전'으로 나오는 지표 기준
+# 등급 기준: (정확도, 세 지표 중 가장 낮은 값). 위에서부터 먼저 맞는 등급을 준다.
+GRADE_RULES = {"S": (.90, 80), "A": (.75, 60), "B": (.60, 40), "C": (.45, 20)}
+GOOD_METRIC = 70
+METRIC_OF_RISK = {"copyright": "copyright", "privacy": "privacy", "bias": "fairness"}
+METRIC_RECOVER = 4     # 위험 카드를 바르게 처리할 때 회복되는 지표       # 결과 화면 AI 결과물이 '안전'으로 나오는 지표 기준
 
-ADAPT_TIME = 25.0      # 적응 단계: 이 시간 안에 나온 카드는 도구 없이도 위험 신호를 보여준다
+ADAPT_TIME = 40.0      # 적응 단계: 이 시간 안에 나온 카드는 도구 없이도 위험 신호와 판단 도움말을 보여준다
 AI_ASSIST_ACCURACY = 0.85  # AI 판단 도우미의 추천이 정답일 확률
 
 # 라이선스 확인 봇: 라이선스 문구의 키워드로 이용 조건을 한 줄 요약한다. 위에서부터 먼저 맞는 규칙을 쓴다.
@@ -562,6 +572,13 @@ class CleanDataGame(arcade.Window):
             return None
         return "bgm_fast" if self.time_left <= RUSH_TIME else "bgm"
 
+    def leave(self):
+        """결과·복습 화면을 떠난다. 런처에서 켰으면 바로 게임 선택 화면으로, 아니면 메뉴로 간다."""
+        if self.from_launcher:
+            self.staff_quit()   # 정상 종료(0)하면 런처가 게임 선택 화면을 다시 띄운다.
+        else:
+            self.go_menu()
+
     def go_menu(self):
         self.paused = False
         self.idle_paused = False
@@ -785,7 +802,11 @@ class CleanDataGame(arcade.Window):
         else:
             idle_key = self.game_screen
         if idle_key in IDLE_RETURN and self.idle_time >= IDLE_RETURN[idle_key]:
-            self.go_menu()
+            # 런처에서 켠 판이 끝난 뒤 방치되면 메뉴를 거치지 않고 런처로 돌아간다.
+            if idle_key in ("result", "review", "idle_paused"):
+                self.leave()
+            else:
+                self.go_menu()
             return
         if self.game_screen == "game" and not self.paused and self.idle_time >= GAME_IDLE:
             # 방문객이 게임 도중 자리를 떠나면 일시정지하고, 곧 처음 화면으로 돌아간다.
@@ -827,7 +848,8 @@ class CleanDataGame(arcade.Window):
             self.spawn_timer = 0
             self.spawn_card()
 
-        speed = min(95, 40 + self.progress() * 0.3)
+        # QA(2026-10): 너무 어렵다는 의견이 많아 처음 속도와 최고 속도를 낮췄다(40→35, 95→85).
+        speed = min(85, 35 + self.progress() * 0.28)
         if "buffer" in self.upgrades:
             speed *= 0.7
         for current in self.cards[:]:
@@ -892,6 +914,7 @@ class CleanDataGame(arcade.Window):
             self.feedback = f"정확합니다! {bonus_text}+{earned}점  '{current.title}' {self.action_name(action)} 처리 완료."
             self.feedback_color = GREEN
             self.play("combo" if self.combo in (5, 10, 20) else "correct")
+            self.recover_metrics(current)
         else:
             self.combo = 0
             lost = self.wrong_penalty(current, action)
@@ -927,6 +950,13 @@ class CleanDataGame(arcade.Window):
             lost = lost * 3 // 2
         return lost
 
+    def recover_metrics(self, current: DataCard):
+        """위험 카드를 직접 바르게 처리하면 그 지표가 조금 회복된다. 실수 한 번으로 판 전체가 망가지지 않게 한다."""
+        for risk in current.risk_types:
+            metric = METRIC_OF_RISK.get(risk)
+            if metric:
+                self.metrics[metric] = min(100.0, self.metrics[metric] + METRIC_RECOVER)
+
     def apply_metric_penalty(self, current: DataCard, action: str):
         if current.correct_action == "approve":
             # 문제없는 데이터를 버리면 데이터 다양성만 조금 줄어든다.
@@ -936,14 +966,14 @@ class CleanDataGame(arcade.Window):
         risks = set(current.risk_types)
         if "copyright" in risks:
             self.copyright_issues += 1
-            self.metrics["copyright"] -= 17 if action == "approve" else 7
+            self.metrics["copyright"] -= 13 if action == "approve" else 5
         if "privacy" in risks:
             if action == "approve":
                 self.privacy_leaks += 1
-            self.metrics["privacy"] -= 25 if action == "approve" else 9
+            self.metrics["privacy"] -= 20 if action == "approve" else 7
         if "bias" in risks:
             self.bias_issues += 1
-            self.metrics["fairness"] -= 18 if action == "approve" else 8
+            self.metrics["fairness"] -= 14 if action == "approve" else 6
         self.metrics = {key: max(0, min(100, value)) for key, value in self.metrics.items()}
 
     @staticmethod
@@ -1009,7 +1039,7 @@ class CleanDataGame(arcade.Window):
             elif key == arcade.key.RIGHT and self.mistakes:
                 self.open_review()
             elif key == arcade.key.ESCAPE:
-                self.go_menu()
+                self.leave()
             return
         if self.game_screen == "review":
             if key in (arcade.key.SPACE, arcade.key.ENTER, arcade.key.R):
@@ -1120,7 +1150,7 @@ class CleanDataGame(arcade.Window):
             elif 525 < x < 755 and 60 < y < 125 and self.mistakes:
                 self.open_review()
             elif 790 < x < 1020 and 60 < y < 125:
-                self.go_menu()
+                self.leave()
             return
         if self.game_screen == "review":
             if 385 < x < 620 and 60 < y < 125:
@@ -1332,8 +1362,8 @@ class CleanDataGame(arcade.Window):
 
     def draw_tutorial_cards(self):
         label("데이터 카드 읽는 법", 145, 615, 24, CYAN, bold=True)
-        steps = [("01", "카드 선택", "카드를 클릭하거나 ← → 키로 고르면 제목·출처·라이선스를 볼 수 있습니다. 위험 신호는 처음 25초 동안 자동 표시되고, 그 뒤에는 탐지 도구를 사야 표시됩니다.", CYAN),
-                 ("02", "행동 선택", "1 승인: 안전하거나 허가·비식별화 등 조건을 갖춘 데이터  ·  2 정제: 개인정보는 마스킹하고 잘못된 분류는 재라벨링  ·  3 제외: 권리·안전 문제가 큰 데이터", YELLOW),
+        steps = [("01", "카드 선택", f"카드를 클릭하거나 ← → 키로 고르면 제목·출처·라이선스를 볼 수 있습니다. 처음 {int(ADAPT_TIME)}초 동안은 위험 신호와 도움말이 자동으로 나옵니다.", CYAN),
+                 ("02", "행동 선택", "1 승인: 그대로 써도 안전한 데이터  ·  2 정제: 가리거나 고치면 쓸 수 있는 데이터  ·  3 제외: 고쳐도 쓰면 안 되는 데이터 (허락 없는 작품, 공개하면 안 되는 개인정보)", YELLOW),
                  ("03", "지표 지키기", "저작권 안전도, 개인정보 보호, 공정성이 모두 높아야 최종 AI가 신뢰를 얻습니다.", GREEN)]
         y = 535
         for number, title, desc, color in steps:
@@ -1409,7 +1439,7 @@ class CleanDataGame(arcade.Window):
         _start, phase_name, phase_desc, *_ = PHASES[self.phase_index()]
         if self.progress() < ADAPT_TIME:
             left = int((ADAPT_TIME - self.progress()) * self.round_length / ROUND_TIME) + 1
-            label(f"적응 단계 {left}초  ·  지금 나오는 카드는 위험 신호가 자동으로 표시됩니다", 1235, 665, 13, CYAN, "right")
+            label(f"적응 단계 {left}초  ·  지금 나오는 카드는 위험 신호와 도움말이 자동으로 나옵니다", 1235, 665, 13, CYAN, "right")
         else:
             rush = phase_name == "데이터 러시"
             label(f"{phase_name}  ·  {phase_desc}", 1235, 665, 13, YELLOW if rush else CYAN, "right")
@@ -1529,7 +1559,11 @@ class CleanDataGame(arcade.Window):
             note = source_note(current.source)
             if note:
                 label(note[0], 711 - 12, 276, 11, note[1], "right")
-        if "ai_assist" in self.upgrades and current.ai_pick:
+        if current.hinted:
+            # 적응 단계 카드는 판단 이유를 미리 보여 주어, 처음 하는 사람도 기준을 익히게 한다.
+            label("도움말", 82, 166, 12, CYAN, bold=True)
+            label(current.explanation, 140, 166, 13, CYAN)
+        elif "ai_assist" in self.upgrades and current.ai_pick:
             label("AI 추천", 330, 166, 12, MUTED)
             label(f"{self.action_name(current.ai_pick)}  · 추천일 뿐, 최종 판단은 직접", 430, 166, 13, ORANGE)
         # 정답 해설은 처리 전에 보여주지 않고, 처리 후 '직전 카드 해설'에서 보여준다.
@@ -1551,6 +1585,7 @@ class CleanDataGame(arcade.Window):
         label(current.title, 86, 266, 15, WHITE, bold=True)
         label(f"{current.risk_label}  ·  출처 {current.source}  ·  라이선스 {current.license}", 86, 240, 12, MUTED)
         wrapped_label(current.explanation, 86, 205, 50, 14, WHITE, 21, 2)
+        label(ACTION_RULES[current.correct_action], 86, 182, 13, CYAN)
         label("다음 카드를 클릭하거나 ← → 키로 골라 검수를 계속하세요.", 86, 162, 12, (96, 115, 145))
 
     @staticmethod
@@ -1603,14 +1638,10 @@ class CleanDataGame(arcade.Window):
         # 기획서 기준: 심각한 개인정보 유출이 있으면 정확도와 관계없이 D
         if self.privacy_leaks >= 3:
             return "D"
-        if accuracy >= .95 and minimum >= 90:
-            return "S"
-        if accuracy >= .85 and minimum >= 70:
-            return "A"
-        if accuracy >= .70 and minimum >= 50:
-            return "B"
-        if accuracy >= .55 and minimum >= 30:
-            return "C"
+        # QA(2026-10): 처음 하는 중학생 기준으로 등급 기준을 낮췄다.
+        for grade, (need_accuracy, need_metric) in GRADE_RULES.items():
+            if accuracy >= need_accuracy and minimum >= need_metric:
+                return grade
         return "D"
 
     def result_message(self):
@@ -1680,7 +1711,7 @@ class CleanDataGame(arcade.Window):
         else:
             label("오답 없음", 640, 93, 17, MUTED, "center", "center", True)
         rect(790, 60, 1020, 125, PANEL_LIGHT)
-        label("ESC  메뉴로", 905, 93, 17, WHITE, "center", "center", True)
+        label("ESC  게임 선택으로" if self.from_launcher else "ESC  메뉴로", 905, 93, 17, WHITE, "center", "center", True)
 
     def metric_state(self, metric: str) -> Optional[bool]:
         """AI 결과물 칸의 상태: None(학습 안 됨), True(안전), False(문제 발생)."""
