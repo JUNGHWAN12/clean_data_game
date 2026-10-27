@@ -1491,7 +1491,8 @@ class CleanDataGame(arcade.Window):
         if self.idle_paused:
             left = max(0, int(IDLE_RETURN["idle_paused"] - self.idle_time) + 1)
             label("아직 플레이 중인가요?", 640, 500, 26, YELLOW, "center", "center", True)
-            label(f"{left}초 뒤 처음 화면으로 돌아갑니다. 계속하려면 ESC를 누르세요.", 640, 458, 14, WHITE, "center", "center")
+            where = "게임 선택 화면" if self.from_launcher else "처음 화면"
+            label(f"{left}초 뒤 {where}으로 돌아갑니다. 계속하려면 ESC를 누르세요.", 640, 458, 14, WHITE, "center", "center")
         else:
             label("일시정지", 640, 500, 28, WHITE, "center", "center", True)
             label("시간과 컨베이어가 멈춰 있습니다.", 640, 458, 14, MUTED, "center", "center")
