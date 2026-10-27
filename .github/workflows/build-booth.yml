@@ -25,25 +25,25 @@ jobs:
       PYTHONIOENCODING: utf-8
     steps:
       - name: 클린 데이터 라벨러(런처) 받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: src/CleanDataLabeler
 
       - name: 데이터 패킷 러너 받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: JUNGHWAN12/data_packet-runner
           ref: ${{ inputs.packet_runner_ref || 'main' }}
           path: src/data_packet-runner
 
       - name: 패스워드 가디언 받기
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: JUNGHWAN12/password_guardian
           ref: ${{ inputs.password_guardian_ref || 'main' }}
           path: src/password_guardian
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -105,7 +105,7 @@ jobs:
           Remove-Item -Force "Booth\CleanDataLabeler\check.log" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "Booth\PacketRunner\logs", "Booth\PacketRunner\data" -ErrorAction SilentlyContinue
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: Booth-windows
           path: Booth
